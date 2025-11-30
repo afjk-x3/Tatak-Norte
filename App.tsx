@@ -746,6 +746,14 @@ const CheckoutModal: React.FC<any> = ({ isOpen, onClose, cart, onCheckoutSubmit,
     const [selectedBarangayName, setSelectedBarangayName] = useState('');
 
     useEffect(() => {
+        if (isOpen) {
+            const defaultAddr = user?.addresses?.find((a: Address) => a.isDefault) || user?.addresses?.[0];
+            setSelectedAddress(defaultAddr);
+            setViewMode(defaultAddr ? 'view' : 'create');
+        }
+    }, [isOpen, user]);
+
+    useEffect(() => {
         if (isOpen && viewMode === 'create') {
             fetchProvinces().then(setProvinces);
         }
