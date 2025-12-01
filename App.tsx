@@ -1,6 +1,9 @@
 
 
 
+
+
+
 // ... existing imports
 // (Keeping imports same, just showing the file content replacement where needed)
 
@@ -457,13 +460,6 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }
 
   if (!isOpen) return null;
 
-  const handleGuestLogin = () => {
-       let guestId = localStorage.getItem('guest_uid');
-       if (!guestId) { guestId = 'guest_' + Date.now(); localStorage.setItem('guest_uid', guestId); }
-       const guestUser: UserState = { uid: guestId, name: 'Guest User', email: 'guest@example.com', emailVerified: true, role: 'customer', bag: [] };
-       onLoginSuccess(guestUser); onClose();
-  };
-
   const getErrorMessage = (err: any) => {
     const code = err.code;
     switch (code) {
@@ -501,7 +497,6 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }
               return;
           }
            if (profile?.status === 'suspended') {
-              // Check if suspension expired
               const isExpired = await checkSuspensionExpiry(result.user.uid);
               if (!isExpired) {
                   setError("This account has been suspended. Please contact support.");
@@ -509,7 +504,6 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }
                   setIsLoading(false);
                   return;
               }
-              // If expired, proceed (profile will be fetched again on reload or we use existing flow)
           }
 
           if (!profile) await createUserDocument(result.user);
@@ -568,21 +562,193 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-scale-in">
-        <div className="bg-brand-cream px-8 py-6 border-b border-stone-100 flex justify-between items-center"><div><h2 className="text-2xl font-serif font-bold text-brand-blue">{mode === 'login' ? 'Welcome Back' : 'Join Tatak Norte'}</h2></div><button onClick={onClose} className="p-2 hover:bg-stone-200 rounded-full transition-colors"><X className="w-5 h-5 text-stone-500" /></button></div>
-        <div className="p-8">
-          {error && <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-r-lg text-sm">{error}</div>}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === 'register' && (<input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-stone-300 bg-white" placeholder="Full Name" />)}
-            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-stone-300 bg-white" placeholder="Email Address" />
-            <div className="relative"><input type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 pr-10 rounded-lg border border-stone-300 bg-white" placeholder="Password" /><button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">{showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}</button></div>
-            <button type="submit" disabled={isLoading} className="w-full py-3 bg-brand-blue text-white rounded-xl font-medium mt-6">{isLoading ? <Loader className="w-5 h-5 animate-spin mx-auto" /> : (mode === 'login' ? 'Sign In' : 'Create Account')}</button>
-          </form>
-          {mode === 'login' && (<div className="mt-4"><button onClick={handleGuestLogin} className="w-full py-3 bg-stone-100 text-stone-600 rounded-xl font-medium hover:bg-stone-200">Continue as Guest</button><div className="mt-6 grid grid-cols-2 gap-4"><button type="button" onClick={() => handleSocialLogin('Facebook')} className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white">Facebook</button><button type="button" onClick={() => handleSocialLogin('Google')} className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white">Google</button></div></div>)}
-          <div className="mt-8 text-center text-sm"><button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="font-bold text-brand-blue">{mode === 'login' ? 'Sign up' : 'Log in'}</button></div>
+        {/* Backdrop */}
+        <div 
+            className="absolute inset-0 bg-stone-900/60 backdrop-blur-md transition-opacity" 
+            onClick={onClose} 
+        />
+        
+        {/* Main Card */}
+        <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col md:flex-row animate-scale-in min-h-[600px]">
+            
+            {/* Left Side: Branding/Image (Hidden on mobile) */}
+            <div className="hidden md:flex w-5/12 bg-brand-blue relative flex-col justify-between p-10 text-white overflow-hidden">
+                {/* Background Image & Overlay */}
+                <div className="absolute inset-0 z-0">
+                    <img 
+                        src="https://www.vigattintourism.com/assets/article_main_photos/optimize/1347854618dzEUWXAi.jpg" 
+                        className="w-full h-full object-cover opacity-40 mix-blend-overlay"
+                        alt="Ilocos Heritage"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-b from-brand-blue/80 via-brand-blue/70 to-blue-900/90" />
+                </div>
+
+                {/* Content */}
+                <div className="relative z-10">
+                    <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center mb-8 border border-white/20 shadow-lg">
+                        <span className="font-serif font-bold text-2xl text-white">T</span>
+                    </div>
+                    <h2 className="text-4xl font-serif font-bold leading-tight mb-4 tracking-tight">
+                        {mode === 'login' ? 'Welcome back to your heritage.' : 'Join the community.'}
+                    </h2>
+                    <p className="text-blue-100 text-lg font-light leading-relaxed">
+                        Explore authentic Ilocano craftsmanship and keep the tradition alive.
+                    </p>
+                </div>
+
+                <div className="relative z-10">
+                    <div className="flex gap-1 mb-3">
+                        {[1,2,3,4,5].map(i => <Star key={i} className="w-4 h-4 fill-current text-yellow-400 text-opacity-90" />)}
+                    </div>
+                    <blockquote className="text-sm text-blue-50 italic mb-2 leading-relaxed opacity-90">
+                        "The Inabel blankets I bought are stunning. It feels good to support local weavers directly."
+                    </blockquote>
+                    <p className="text-xs text-blue-200 font-bold uppercase tracking-wider">— Leslie A.</p>
+                </div>
+            </div>
+
+            {/* Right Side: Form */}
+            <div className="w-full md:w-7/12 bg-white p-8 md:p-12 flex flex-col justify-center relative">
+                <button 
+                    onClick={onClose} 
+                    className="absolute top-6 right-6 p-2 text-stone-400 hover:bg-stone-50 hover:text-stone-600 rounded-full transition-colors"
+                >
+                    <X className="w-6 h-6" />
+                </button>
+
+                <div className="mb-8 mt-4 md:mt-0">
+                    <h3 className="text-3xl font-serif font-bold text-stone-900 mb-2">
+                        {mode === 'login' ? 'Sign In' : 'Create Account'}
+                    </h3>
+                    <p className="text-stone-500">
+                        {mode === 'login' ? "New to Tatak Norte?" : "Already have an account?"} {' '}
+                        <button 
+                            onClick={() => {
+                                setMode(mode === 'login' ? 'register' : 'login');
+                                setError(null);
+                            }} 
+                            className="font-bold text-brand-blue hover:underline transition-all"
+                        >
+                            {mode === 'login' ? 'Create an account' : 'Log in'}
+                        </button>
+                    </p>
+                </div>
+
+                {error && (
+                    <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-r-xl text-sm flex items-start gap-3 animate-fade-in-up">
+                        <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                        <span>{error}</span>
+                    </div>
+                )}
+
+                {isVerificationSent ? (
+                    <div className="text-center p-8 bg-green-50 rounded-2xl border border-green-100 animate-fade-in-up">
+                        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 text-green-600">
+                            <CheckCircle className="w-8 h-8" />
+                        </div>
+                        <h4 className="font-bold text-green-800 text-lg mb-2">Check your email</h4>
+                        <p className="text-green-700 text-sm">We've sent a verification link to <strong>{email}</strong>. Please verify your email to continue.</p>
+                        <button onClick={() => setIsVerificationSent(false)} className="mt-6 text-sm font-bold text-green-800 hover:underline">Back to Login</button>
+                    </div>
+                ) : (
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        {mode === 'register' && (
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-bold text-stone-500 uppercase tracking-wider ml-1">Full Name</label>
+                                <div className="relative group">
+                                    <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400 group-focus-within:text-brand-blue transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        required 
+                                        value={fullName} 
+                                        onChange={(e) => setFullName(e.target.value)} 
+                                        className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder:text-stone-400" 
+                                        placeholder="Juan Dela Cruz" 
+                                    />
+                                </div>
+                            </div>
+                        )}
+                        
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-stone-500 uppercase tracking-wider ml-1">Email Address</label>
+                            <div className="relative group">
+                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400 group-focus-within:text-brand-blue transition-colors" />
+                                <input 
+                                    type="email" 
+                                    required 
+                                    value={email} 
+                                    onChange={(e) => setEmail(e.target.value)} 
+                                    className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder:text-stone-400" 
+                                    placeholder="name@example.com" 
+                                />
+                            </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-stone-500 uppercase tracking-wider ml-1">Password</label>
+                            <div className="relative group">
+                                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400 group-focus-within:text-brand-blue transition-colors" />
+                                <input 
+                                    type={showPassword ? 'text' : 'password'} 
+                                    required 
+                                    value={password} 
+                                    onChange={(e) => setPassword(e.target.value)} 
+                                    className="w-full pl-12 pr-12 py-3.5 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder:text-stone-400" 
+                                    placeholder="••••••••" 
+                                />
+                                <button 
+                                    type="button" 
+                                    onClick={() => setShowPassword(!showPassword)} 
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 transition-colors p-1"
+                                >
+                                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                                </button>
+                            </div>
+                        </div>
+
+                        <button 
+                            type="submit" 
+                            disabled={isLoading} 
+                            className="w-full py-4 bg-brand-blue text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 hover:bg-blue-800 hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-70 disabled:hover:translate-y-0 disabled:hover:shadow-lg mt-2"
+                        >
+                            {isLoading ? <Loader className="w-5 h-5 animate-spin mx-auto" /> : (mode === 'login' ? 'Sign In' : 'Create Account')}
+                        </button>
+                    </form>
+                )}
+
+                {mode === 'login' && !isVerificationSent && (
+                    <>
+                         <div className="relative my-8">
+                            <div className="absolute inset-0 flex items-center">
+                                <div className="w-full border-t border-stone-200"></div>
+                            </div>
+                            <div className="relative flex justify-center text-sm">
+                                <span className="px-4 bg-white text-stone-500 font-medium">Or continue with</span>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <button 
+                                type="button" 
+                                onClick={() => handleSocialLogin('Google')} 
+                                className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 hover:border-stone-300 transition-all font-medium text-stone-700 text-sm"
+                            >
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                                Google
+                            </button>
+                            <button 
+                                type="button" 
+                                onClick={() => handleSocialLogin('Facebook')} 
+                                className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white hover:bg-stone-50 hover:border-stone-300 transition-all font-medium text-stone-700 text-sm"
+                            >
+                                <Facebook className="w-5 h-5 text-blue-600" />
+                                Facebook
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
         </div>
-      </div>
     </div>
   );
 };
