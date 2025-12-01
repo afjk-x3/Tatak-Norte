@@ -174,17 +174,19 @@ const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
 
-            <button 
-              onClick={onCartClick}
-              className="p-2 text-stone-600 hover:text-brand-blue transition-colors relative"
-            >
-              <ShoppingBag className="w-5 h-5" />
-              {cartCount > 0 && (
-                <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-white transform translate-x-1/4 -translate-y-1/4 bg-brand-accent rounded-full">
-                  {cartCount}
-                </span>
-              )}
-            </button>
+            {!isSellerOrAdmin && (
+              <button 
+                onClick={onCartClick}
+                className="p-2 text-stone-600 hover:text-brand-blue transition-colors relative"
+              >
+                <ShoppingBag className="w-5 h-5" />
+                {cartCount > 0 && (
+                  <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-white transform translate-x-1/4 -translate-y-1/4 bg-brand-accent rounded-full">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+            )}
             
             {/* Mobile menu button */}
             <div className="md:hidden">

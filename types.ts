@@ -24,7 +24,12 @@ export interface UserProfile {
   bankAccounts?: BankAccount[];
   shopName?: string;
   shopAddress?: string;
+  shopProvince?: string;
+  shopCity?: string;
+  shopBarangay?: string;
   shopImage?: string;
+  status?: 'active' | 'suspended' | 'banned';
+  suspensionEndDate?: any; // Timestamp
 }
 
 export interface BankAccount {
@@ -65,6 +70,7 @@ export interface Product {
   sellerId?: string;
   stock?: number;
   variations?: Variation[];
+  sellerStatus?: 'active' | 'suspended' | 'banned';
 }
 
 export interface CartItem extends Product {
@@ -88,7 +94,7 @@ export interface Conversation {
   updatedAt: any;
 }
 
-export type OrderStatus = 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled';
+export type OrderStatus = 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled' | 'Cancellation Requested';
 export type PaymentMethod = 'GCash' | 'PayMaya' | 'COD' | 'BankTransfer';
 export type DeliveryMethod = 'Standard' | 'Pickup';
 
@@ -125,6 +131,7 @@ export interface Order {
   sellerIds?: string[]; // List of sellers involved in this order
   trackingNumber?: string;
   courier?: string;
+  cancellationReason?: string;
 }
 
 export interface SellerApplication {

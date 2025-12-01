@@ -1,11 +1,16 @@
 
+
+
+// ... existing imports
+// (Keeping imports same, just showing the file content replacement where needed)
+
 import React, { useState, useEffect, useRef } from 'react';
 import Navbar from './components/Navbar';
 import { PRODUCTS } from './constants'; 
 import { Product, CartItem, Category, UserRole, UserProfile, Order, OrderStatus, Review, PaymentMethod, DeliveryMethod, Address, BankAccount, Variation, TrackingEvent, SellerApplication } from './types';
-import { Star, ArrowRight, Trash2, Plus, Minus, MapPin, X, ShoppingBag, Facebook, CheckCircle, Loader, Eye, EyeOff, LayoutDashboard, Package, TrendingUp, Users, AlertCircle, ShieldCheck, Ban, ChevronLeft, Tag, Search, ShoppingCart, CreditCard, ChevronDown, UserCircle, Edit3, Save, Camera, Mail, MessageSquare, Truck, Banknote, Bell, FileText, Lock, Settings, Check, Filter, SlidersHorizontal, Award, ChevronRight, User, Store, Send, ChevronUp, Image as ImageIcon, Printer, AlertTriangle, Phone, Globe, Instagram, Twitter, Calendar, Heart, Hammer, Leaf, LogIn } from 'lucide-react';
+import { Star, ArrowRight, Trash2, Plus, Minus, MapPin, X, ShoppingBag, Facebook, CheckCircle, Loader, Eye, EyeOff, LayoutDashboard, Package, TrendingUp, Users, AlertCircle, ShieldCheck, Ban, ChevronLeft, Tag, Search, ShoppingCart, CreditCard, ChevronDown, UserCircle, Edit3, Save, Camera, Mail, MessageSquare, Truck, Banknote, Bell, FileText, Lock, Settings, Check, Filter, SlidersHorizontal, Award, ChevronRight, User, Store, Send, ChevronUp, Image as ImageIcon, Printer, AlertTriangle, Phone, Globe, Instagram, Twitter, Calendar, Heart, Hammer, Leaf, LogIn, PauseCircle, ShieldBan, PlayCircle } from 'lucide-react';
 import firebase, { auth, isFirebaseConfigured } from './firebaseConfig';
-import { fetchProducts, seedDatabase, createUserDocument, getUserProfile, fetchSellerProducts, addProduct, deleteProduct, fetchAllUsers, updateUserRole, deleteUserDocument, createOrder, fetchOrders, updateOrderStatus, updateUserBag, updateUserProfile, addProductReview, fetchProductReviews, uploadProfileImage, uploadShopImage, startConversation, uploadProductImage, updateProduct, updateOrderTracking, fetchJtTracking, submitSellerApplication, fetchSellerApplications, approveSellerApplication, rejectSellerApplication } from './services/firestoreService';
+import { fetchProducts, seedDatabase, createUserDocument, getUserProfile, fetchSellerProducts, addProduct, deleteProduct, fetchAllUsers, updateUserRole, deleteUserDocument, createOrder, fetchOrders, updateOrderStatus, updateUserBag, updateUserProfile, addProductReview, fetchProductReviews, uploadProfileImage, uploadShopImage, startConversation, uploadProductImage, updateProduct, updateOrderTracking, fetchJtTracking, submitSellerApplication, fetchSellerApplications, approveSellerApplication, rejectSellerApplication, requestOrderCancellation, approveOrderCancellation, fetchApprovedSellers, updateUserStatus, checkSuspensionExpiry } from './services/firestoreService';
 import { fetchProvinces, fetchCities, fetchBarangays, LocationCode } from './services/locationService';
 import ChatAssistant from './components/ChatAssistant';
 import { HERO_COVER } from './assets/images';
@@ -28,7 +33,12 @@ interface UserState {
     bankAccounts?: BankAccount[];
     shopName?: string;
     shopAddress?: string;
+    shopProvince?: string;
+    shopCity?: string;
+    shopBarangay?: string;
     shopImage?: string;
+    status?: 'active' | 'suspended' | 'banned';
+    suspensionEndDate?: any;
 }
 
 // --- Hook for Body Scroll Lock ---
@@ -129,7 +139,87 @@ const Footer: React.FC<{ onNavigate: (path: string) => void; user: UserState | n
   );
 };
 
-// --- Seller Registration Page ---
+const CancelOrderModal: React.FC<{ isOpen: boolean; onClose: () => void; onSubmit: (reason: string) => void; isLoading: boolean }> = ({ isOpen, onClose, onSubmit, isLoading }) => {
+    const [reason, setReason] = useState('');
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl w-full max-w-md p-6 animate-scale-in">
+                <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-xl font-bold text-stone-900">Cancel Order</h3>
+                     <button onClick={onClose}><X className="w-5 h-5 text-stone-500" /></button>
+                </div>
+                <p className="text-sm text-stone-500 mb-4">Please tell us why you want to cancel this order. The seller will review your request.</p>
+                <textarea
+                    className="w-full p-3 border border-stone-200 rounded-xl mb-4 focus:ring-2 focus:ring-brand-blue/20 outline-none"
+                    rows={4}
+                    placeholder="Reason for cancellation..."
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                />
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="flex-1 py-3 border border-stone-200 rounded-xl font-bold text-stone-600 hover:bg-stone-50">Back</button>
+                    <button
+                        onClick={() => onSubmit(reason)}
+                        disabled={!reason.trim() || isLoading}
+                        className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 disabled:opacity-50"
+                    >
+                        {isLoading ? 'Submitting...' : 'Confirm Cancellation'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SuspendUserModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: (days: number) => void; sellerName: string }> = ({ isOpen, onClose, onConfirm, sellerName }) => {
+    const [days, setDays] = useState(7);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl w-full max-w-sm p-6 animate-scale-in text-center">
+                <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4 text-orange-600">
+                    <PauseCircle className="w-8 h-8" />
+                </div>
+                <h3 className="text-xl font-bold mb-2 text-stone-900">Suspend {sellerName}?</h3>
+                <p className="text-stone-500 mb-6 text-sm">
+                    The seller's products will be hidden from the marketplace during the suspension period.
+                </p>
+                
+                <div className="mb-6 text-left">
+                    <label className="block text-sm font-bold text-stone-700 mb-2">Suspension Duration (Days)</label>
+                    <input 
+                        type="number" 
+                        min="1" 
+                        value={days} 
+                        onChange={(e) => setDays(Math.max(1, parseInt(e.target.value) || 0))}
+                        className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                    />
+                </div>
+
+                <div className="flex gap-3">
+                    <button 
+                        onClick={onClose} 
+                        className="flex-1 py-3 border border-stone-200 rounded-xl font-bold text-stone-600 hover:bg-stone-50"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => onConfirm(days)} 
+                        className="flex-1 py-3 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600"
+                    >
+                        Suspend
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: () => void }> = ({ user, onLoginClick }) => {
     const [provinces, setProvinces] = useState<LocationCode[]>([]);
     const [cities, setCities] = useState<LocationCode[]>([]);
@@ -152,7 +242,6 @@ const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: (
         fetchProvinces().then(setProvinces);
     }, []);
 
-    // Update owner name/email if user logs in after page load
     useEffect(() => {
         if (user) {
             setFormData(prev => ({
@@ -174,7 +263,6 @@ const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: (
     };
 
     const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        // Only accept numbers, max 11 digits
         const value = e.target.value.replace(/\D/g, '');
         if (value.length <= 11) {
             setFormData({ ...formData, phoneNumber: value });
@@ -183,17 +271,13 @@ const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: (
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        
-        if (!user) return; // Should be blocked by UI, but double check
-
+        if (!user) return;
         setIsLoading(true);
-
         if (formData.phoneNumber.length !== 11) {
             alert("Phone number must be exactly 11 digits.");
             setIsLoading(false);
             return;
         }
-
         try {
             await submitSellerApplication({
                 userId: user.uid,
@@ -217,7 +301,6 @@ const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: (
         }
     };
 
-    // --- State: User Not Logged In ---
     if (!user) {
         return (
             <div className="min-h-screen bg-stone-50 flex flex-col items-center justify-center p-4">
@@ -229,21 +312,15 @@ const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: (
                     <p className="text-stone-500 mb-8 leading-relaxed">
                         Join our community of authentic Ilocano artisans. Please log in or create an account to begin your seller application.
                     </p>
-                    <button 
-                        onClick={onLoginClick}
-                        className="w-full py-4 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2"
-                    >
+                    <button onClick={onLoginClick} className="w-full py-4 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2">
                         <LogIn className="w-5 h-5" /> Log In / Sign Up
                     </button>
-                    <p className="text-xs text-stone-400 mt-6">
-                        Already have an account? Just log in to proceed.
-                    </p>
+                    <p className="text-xs text-stone-400 mt-6">Already have an account? Just log in to proceed.</p>
                 </div>
             </div>
         );
     }
 
-    // --- State: Application Submitted ---
     if (isSubmitted) {
         return (
             <div className="min-h-screen bg-stone-50 flex flex-col items-center justify-center p-4 animate-scale-in">
@@ -255,208 +332,64 @@ const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: (
                     <p className="text-stone-600 mb-8 leading-relaxed">
                         Thank you for your interest in becoming a Tatak Norte seller. Our team will review your application and contact you within 24-48 hours.
                     </p>
-                    <button onClick={() => window.location.href = '/'} className="px-8 py-3 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors">
-                        Return Home
-                    </button>
+                    <button onClick={() => window.location.href = '/'} className="px-8 py-3 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors">Return Home</button>
                 </div>
             </div>
         );
     }
 
-    // --- State: Registration Form ---
     return (
         <div className="min-h-screen bg-stone-50 py-12 px-4 md:px-8 flex justify-center">
             <div className="max-w-6xl w-full grid md:grid-cols-12 gap-8 items-start animate-fade-in-up">
-                
-                {/* Left Panel: Info */}
                 <div className="md:col-span-4 space-y-6 sticky top-24">
                     <div className="bg-brand-blue text-white p-8 rounded-3xl shadow-xl overflow-hidden relative">
                          <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
                          <h2 className="text-2xl font-serif font-bold mb-4 relative z-10">Why sell with us?</h2>
                          <ul className="space-y-4 relative z-10">
-                             <li className="flex gap-3">
-                                 <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3" /></div>
-                                 <span className="text-blue-100 text-sm">Reach a wider audience of heritage lovers</span>
-                             </li>
-                             <li className="flex gap-3">
-                                 <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3" /></div>
-                                 <span className="text-blue-100 text-sm">Secure payments and verified customers</span>
-                             </li>
-                             <li className="flex gap-3">
-                                 <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3" /></div>
-                                 <span className="text-blue-100 text-sm">Dedicated support for local artisans</span>
-                             </li>
+                             <li className="flex gap-3"><div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3" /></div><span className="text-blue-100 text-sm">Reach a wider audience of heritage lovers</span></li>
+                             <li className="flex gap-3"><div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3" /></div><span className="text-blue-100 text-sm">Secure payments and verified customers</span></li>
+                             <li className="flex gap-3"><div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3" /></div><span className="text-blue-100 text-sm">Dedicated support for local artisans</span></li>
                          </ul>
                     </div>
-                    
                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-                        <h3 className="font-bold text-stone-900 mb-2 flex items-center gap-2">
-                            <ShieldCheck className="w-5 h-5 text-green-500" /> Vetted Sellers
-                        </h3>
-                        <p className="text-xs text-stone-500 leading-relaxed">
-                            We manually review every application to ensure authenticity. Once approved, you will receive an official <span className="font-mono text-stone-700 bg-stone-100 px-1 rounded">@tataknorte.ph</span> seller account handle.
-                        </p>
+                        <h3 className="font-bold text-stone-900 mb-2 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-green-500" /> Vetted Sellers</h3>
+                        <p className="text-xs text-stone-500 leading-relaxed">We manually review every application to ensure authenticity. Once approved, you will receive an official <span className="font-mono text-stone-700 bg-stone-100 px-1 rounded">@tataknorte.ph</span> seller account handle.</p>
                     </div>
                 </div>
-
-                {/* Right Panel: Form */}
                 <div className="md:col-span-8 bg-white p-8 md:p-10 rounded-3xl shadow-xl border border-stone-100">
                     <div className="mb-8 pb-8 border-b border-stone-100">
                         <h1 className="text-3xl font-serif font-bold text-stone-900 mb-2">Seller Registration</h1>
                         <p className="text-stone-500">Complete the form below to apply.</p>
                     </div>
-
                     <form className="space-y-8" onSubmit={handleSubmit}>
-                        {/* Section 1: Business Details */}
                         <div className="space-y-4">
-                            <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2">
-                                <Store className="w-4 h-4" /> Business Details
-                            </h3>
+                            <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2"><Store className="w-4 h-4" /> Business Details</h3>
                             <div className="grid md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-stone-700 mb-2">Business Name</label>
-                                    <input 
-                                        type="text" 
-                                        required 
-                                        value={formData.businessName}
-                                        onChange={e => setFormData({...formData, businessName: e.target.value})}
-                                        className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" 
-                                        placeholder="e.g. Nana Clara's Weaving" 
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-stone-700 mb-2">Primary Category</label>
-                                    <div className="relative">
-                                        <select 
-                                            className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-white appearance-none"
-                                            value={formData.category}
-                                            onChange={e => setFormData({...formData, category: e.target.value})}
-                                        >
-                                            <option value="Weaving (Inabel)">Weaving (Inabel)</option>
-                                            <option value="Pottery (Burnay)">Pottery (Burnay)</option>
-                                            <option value="Delicacies">Delicacies</option>
-                                            <option value="Woodworks">Woodworks</option>
-                                            <option value="Accessories">Accessories</option>
-                                            <option value="Others">Others</option>
-                                        </select>
-                                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
-                                    </div>
-                                </div>
+                                <div><label className="block text-sm font-bold text-stone-700 mb-2">Business Name</label><input type="text" required value={formData.businessName} onChange={e => setFormData({...formData, businessName: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" placeholder="e.g. Nana Clara's Weaving" /></div>
+                                <div><label className="block text-sm font-bold text-stone-700 mb-2">Primary Category</label><div className="relative"><select className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-white appearance-none" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}><option value="Weaving (Inabel)">Weaving (Inabel)</option><option value="Pottery (Burnay)">Pottery (Burnay)</option><option value="Delicacies">Delicacies</option><option value="Woodworks">Woodworks</option><option value="Accessories">Accessories</option><option value="Others">Others</option></select><ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" /></div></div>
                             </div>
                         </div>
-
-                        {/* Section 2: Contact Info */}
                         <div className="space-y-4">
-                            <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2">
-                                <User className="w-4 h-4" /> Contact Information
-                            </h3>
+                            <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2"><User className="w-4 h-4" /> Contact Information</h3>
                             <div className="grid md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-stone-700 mb-2">Owner/Artisan Name</label>
-                                    <input 
-                                        type="text" 
-                                        required 
-                                        value={formData.ownerName}
-                                        onChange={e => setFormData({...formData, ownerName: e.target.value})}
-                                        className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" 
-                                        placeholder="Full Name" 
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-stone-700 mb-2">Email Address</label>
-                                    <input 
-                                        type="email" 
-                                        required 
-                                        readOnly // Email is tied to auth
-                                        value={formData.email}
-                                        className="w-full px-4 py-3 rounded-xl border border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed" 
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-stone-700 mb-2">Phone Number</label>
-                                    <input 
-                                        type="text" 
-                                        required 
-                                        value={formData.phoneNumber}
-                                        onChange={handlePhoneChange}
-                                        className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" 
-                                        placeholder="09123456789"
-                                        maxLength={11}
-                                    />
-                                    <p className="text-xs text-stone-400 mt-1">Must be 11 digits</p>
-                                </div>
+                                <div><label className="block text-sm font-bold text-stone-700 mb-2">Owner/Artisan Name</label><input type="text" required value={formData.ownerName} onChange={e => setFormData({...formData, ownerName: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" placeholder="Full Name" /></div>
+                                <div><label className="block text-sm font-bold text-stone-700 mb-2">Email Address</label><input type="email" required readOnly value={formData.email} className="w-full px-4 py-3 rounded-xl border border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed" /></div>
+                                <div><label className="block text-sm font-bold text-stone-700 mb-2">Phone Number</label><input type="text" required value={formData.phoneNumber} onChange={handlePhoneChange} className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" placeholder="09123456789" maxLength={11} /><p className="text-xs text-stone-400 mt-1">Must be 11 digits</p></div>
                             </div>
                         </div>
-
-                         {/* Section 3: Location */}
                         <div className="space-y-4">
-                             <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2">
-                                <MapPin className="w-4 h-4" /> Location
-                            </h3>
+                             <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2"><MapPin className="w-4 h-4" /> Location</h3>
                             <div className="grid md:grid-cols-2 gap-6">
-                                 <div>
-                                    <label className="block text-sm font-bold text-stone-700 mb-2">Province</label>
-                                    <div className="relative">
-                                        <select 
-                                            className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-white appearance-none"
-                                            value={formData.provinceCode}
-                                            onChange={handleProvinceChange}
-                                            required
-                                        >
-                                            <option value="">Select Province</option>
-                                            {provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}
-                                        </select>
-                                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
-                                    </div>
-                                 </div>
-                                 <div>
-                                    <label className="block text-sm font-bold text-stone-700 mb-2">Municipality/City</label>
-                                    <div className="relative">
-                                        <select 
-                                            className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-white appearance-none"
-                                            value={formData.city}
-                                            onChange={e => setFormData({...formData, city: e.target.value})}
-                                            disabled={!formData.provinceCode}
-                                            required
-                                        >
-                                            <option value="">Select City</option>
-                                            {cities.map(c => <option key={c.code} value={c.name}>{c.name}</option>)}
-                                        </select>
-                                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
-                                    </div>
-                                 </div>
+                                 <div><label className="block text-sm font-bold text-stone-700 mb-2">Province</label><div className="relative"><select className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-white appearance-none" value={formData.provinceCode} onChange={handleProvinceChange} required><option value="">Select Province</option>{provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}</select><ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" /></div></div>
+                                 <div><label className="block text-sm font-bold text-stone-700 mb-2">Municipality/City</label><div className="relative"><select className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-white appearance-none" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} disabled={!formData.provinceCode} required><option value="">Select City</option>{cities.map(c => <option key={c.code} value={c.name}>{c.name}</option>)}</select><ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" /></div></div>
                             </div>
                         </div>
-
-                        {/* Section 4: Story */}
                         <div className="space-y-4">
-                             <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2">
-                                <FileText className="w-4 h-4" /> Your Craft
-                            </h3>
-                            <div>
-                                <label className="block text-sm font-bold text-stone-700 mb-2">Tell us about your products</label>
-                                <textarea 
-                                    required 
-                                    rows={4}
-                                    value={formData.description}
-                                    onChange={e => setFormData({...formData, description: e.target.value})}
-                                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" 
-                                    placeholder="Describe your products, history, and what makes them special..." 
-                                />
-                            </div>
+                             <h3 className="text-sm font-bold text-brand-blue uppercase tracking-wider flex items-center gap-2"><FileText className="w-4 h-4" /> Your Craft</h3>
+                            <div><label className="block text-sm font-bold text-stone-700 mb-2">Tell us about your products</label><textarea required rows={4} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" placeholder="Describe your products, history, and what makes them special..." /></div>
                         </div>
-
-                        <button 
-                            type="submit" 
-                            disabled={isLoading}
-                            className="w-full py-4 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2"
-                        >
-                            {isLoading ? <Loader className="w-5 h-5 animate-spin" /> : 'Submit Application'} <Send className="w-4 h-4" />
-                        </button>
-                        
-                        <p className="text-center text-xs text-stone-400">
-                            By submitting, you agree to our Terms of Service and Artisan Code of Conduct.
-                        </p>
+                        <button type="submit" disabled={isLoading} className="w-full py-4 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2">{isLoading ? <Loader className="w-5 h-5 animate-spin" /> : 'Submit Application'} <Send className="w-4 h-4" /></button>
+                        <p className="text-center text-xs text-stone-400">By submitting, you agree to our Terms of Service and Artisan Code of Conduct.</p>
                     </form>
                 </div>
             </div>
@@ -464,7 +397,6 @@ const SellerRegistrationPage: React.FC<{ user: UserState | null; onLoginClick: (
     );
 };
 
-// --- Tracking Modal ---
 const TrackingModal: React.FC<{ isOpen: boolean; onClose: () => void; trackingNumber: string; status: OrderStatus }> = ({ isOpen, onClose, trackingNumber, status }) => {
     const [events, setEvents] = useState<TrackingEvent[]>([]);
     const [loading, setLoading] = useState(true);
@@ -485,36 +417,12 @@ const TrackingModal: React.FC<{ isOpen: boolean; onClose: () => void; trackingNu
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden animate-scale-in">
                 <div className="bg-red-600 px-6 py-4 flex justify-between items-center text-white">
-                    <div className="flex items-center gap-2">
-                        <Truck className="w-5 h-5" />
-                        <span className="font-bold">J&T Express Tracking</span>
-                    </div>
+                    <div className="flex items-center gap-2"><Truck className="w-5 h-5" /><span className="font-bold">J&T Express Tracking</span></div>
                     <button onClick={onClose}><X className="w-5 h-5" /></button>
                 </div>
                 <div className="p-6">
-                    <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 mb-6 flex justify-between items-center">
-                        <div>
-                            <p className="text-xs text-stone-500 uppercase tracking-wider">Tracking Number</p>
-                            <p className="text-lg font-mono font-bold text-stone-900 tracking-widest">{trackingNumber}</p>
-                        </div>
-                        <Printer className="w-5 h-5 text-stone-400" />
-                    </div>
-
-                    {loading ? (
-                        <div className="py-10 text-center"><Loader className="w-8 h-8 animate-spin mx-auto text-brand-blue" /></div>
-                    ) : (
-                        <div className="space-y-6 relative pl-4 border-l-2 border-stone-200 ml-2">
-                            {events.map((event, index) => (
-                                <div key={index} className="relative pl-6">
-                                    <div className={`absolute -left-[21px] top-1 w-4 h-4 rounded-full border-2 border-white ${index === 0 ? 'bg-green-500 ring-2 ring-green-100' : 'bg-stone-300'}`} />
-                                    <p className={`text-sm font-bold ${index === 0 ? 'text-green-600' : 'text-stone-800'}`}>{event.status}</p>
-                                    <p className="text-xs text-stone-500 mb-1">{event.timestamp}</p>
-                                    <p className="text-sm text-stone-600">{event.description}</p>
-                                    <p className="text-xs text-stone-400 mt-1 flex items-center gap-1"><MapPin className="w-3 h-3" /> {event.location}</p>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                    <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 mb-6 flex justify-between items-center"><div><p className="text-xs text-stone-500 uppercase tracking-wider">Tracking Number</p><p className="text-lg font-mono font-bold text-stone-900 tracking-widest">{trackingNumber}</p></div><Printer className="w-5 h-5 text-stone-400" /></div>
+                    {loading ? <div className="py-10 text-center"><Loader className="w-8 h-8 animate-spin mx-auto text-brand-blue" /></div> : <div className="space-y-6 relative pl-4 border-l-2 border-stone-200 ml-2">{events.map((event, index) => (<div key={index} className="relative pl-6"><div className={`absolute -left-[21px] top-1 w-4 h-4 rounded-full border-2 border-white ${index === 0 ? 'bg-green-500 ring-2 ring-green-100' : 'bg-stone-300'}`} /><p className={`text-sm font-bold ${index === 0 ? 'text-green-600' : 'text-stone-800'}`}>{event.status}</p><p className="text-xs text-stone-500 mb-1">{event.timestamp}</p><p className="text-sm text-stone-600">{event.description}</p><p className="text-xs text-stone-400 mt-1 flex items-center gap-1"><MapPin className="w-3 h-3" /> {event.location}</p></div>))}</div>}
                 </div>
             </div>
         </div>
@@ -551,21 +459,9 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }
 
   const handleGuestLogin = () => {
        let guestId = localStorage.getItem('guest_uid');
-       if (!guestId) {
-           guestId = 'guest_' + Date.now();
-           localStorage.setItem('guest_uid', guestId);
-       }
-       
-       const guestUser: UserState = {
-           uid: guestId,
-           name: 'Guest User',
-           email: 'guest@example.com',
-           emailVerified: true,
-           role: 'customer', 
-           bag: []
-       };
-       onLoginSuccess(guestUser);
-       onClose();
+       if (!guestId) { guestId = 'guest_' + Date.now(); localStorage.setItem('guest_uid', guestId); }
+       const guestUser: UserState = { uid: guestId, name: 'Guest User', email: 'guest@example.com', emailVerified: true, role: 'customer', bag: [] };
+       onLoginSuccess(guestUser); onClose();
   };
 
   const getErrorMessage = (err: any) => {
@@ -587,47 +483,40 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }
     e.preventDefault();
     setIsLoading(true);
     setError(null);
-
     const lowerEmail = email.toLowerCase();
     const isInternalDomain = lowerEmail.endsWith('@tataknorte.ph');
     const isSetupAccount = lowerEmail.startsWith('admin') || lowerEmail.startsWith('seller');
-    
-    if (mode === 'register' && isInternalDomain && !isSetupAccount) {
-        setError("Registration restricted. Only 'admin*' or 'seller*' accounts can use the @tataknorte.ph domain.");
-        setIsLoading(false);
-        return;
-    }
-
-    if (!isFirebaseConfigured()) {
-       setError("System Error: Database not configured.");
-       setIsLoading(false);
-       return;
-    }
-
+    if (mode === 'register' && isInternalDomain && !isSetupAccount) { setError("Registration restricted. Only 'admin*' or 'seller*' accounts can use the @tataknorte.ph domain."); setIsLoading(false); return; }
+    if (!isFirebaseConfigured()) { setError("System Error: Database not configured."); setIsLoading(false); return; }
     try {
       if (mode === 'login') {
         const result = await auth.signInWithEmailAndPassword(email, password);
         if (result.user) {
-          await createUserDocument(result.user);
           const profile = await getUserProfile(result.user.uid);
+          
+          if (profile?.status === 'banned') {
+              setError("This account has been banned.");
+              await auth.signOut();
+              setIsLoading(false);
+              return;
+          }
+           if (profile?.status === 'suspended') {
+              // Check if suspension expired
+              const isExpired = await checkSuspensionExpiry(result.user.uid);
+              if (!isExpired) {
+                  setError("This account has been suspended. Please contact support.");
+                  await auth.signOut();
+                  setIsLoading(false);
+                  return;
+              }
+              // If expired, proceed (profile will be fetched again on reload or we use existing flow)
+          }
+
+          if (!profile) await createUserDocument(result.user);
+          
+          const updatedProfile = await getUserProfile(result.user.uid);
           onLoginSuccess({ 
-              uid: result.user.uid,
-              name: result.user.displayName || 'User', 
-              email: result.user.email || '', 
-              emailVerified: result.user.emailVerified,
-              role: profile?.role || 'customer',
-              username: profile?.username,
-              phoneNumber: profile?.phoneNumber,
-              gender: profile?.gender,
-              birthDate: profile?.birthDate,
-              photoURL: profile?.photoURL,
-              bag: profile?.bag || [],
-              createdAt: profile?.createdAt,
-              addresses: profile?.addresses || [],
-              bankAccounts: profile?.bankAccounts || [],
-              shopName: profile?.shopName,
-              shopAddress: profile?.shopAddress,
-              shopImage: profile?.shopImage
+              uid: result.user.uid, name: result.user.displayName || 'User', email: result.user.email || '', emailVerified: result.user.emailVerified, role: updatedProfile?.role || 'customer', username: updatedProfile?.username, phoneNumber: updatedProfile?.phoneNumber, gender: updatedProfile?.gender, birthDate: updatedProfile?.birthDate, photoURL: updatedProfile?.photoURL, bag: updatedProfile?.bag || [], createdAt: updatedProfile?.createdAt, addresses: updatedProfile?.addresses || [], bankAccounts: updatedProfile?.bankAccounts || [], shopName: updatedProfile?.shopName, shopAddress: updatedProfile?.shopAddress, shopProvince: updatedProfile?.shopProvince, shopCity: updatedProfile?.shopCity, shopBarangay: updatedProfile?.shopBarangay, shopImage: updatedProfile?.shopImage, status: updatedProfile?.status, suspensionEndDate: updatedProfile?.suspensionEndDate
           });
         }
         onClose();
@@ -640,87 +529,58 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }
         }
         setIsVerificationSent(true);
       }
-    } catch (err: any) {
-      console.error(err);
-      setError(getErrorMessage(err));
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (err: any) { console.error(err); setError(getErrorMessage(err)); } finally { setIsLoading(false); }
   };
 
   const handleSocialLogin = async (providerName: 'Facebook' | 'Google') => {
-    setIsLoading(true);
-    setError(null);
+    setIsLoading(true); setError(null);
     if (!isFirebaseConfigured()) { setError("System Error: Database not configured."); setIsLoading(false); return; }
     try {
       const provider = providerName === 'Google' ? new firebase.auth.GoogleAuthProvider() : new firebase.auth.FacebookAuthProvider();
-      if (providerName === 'Google') { provider.addScope('email'); provider.addScope('profile'); } 
-      else { provider.addScope('email'); provider.addScope('public_profile'); }
+      if (providerName === 'Google') { provider.addScope('email'); provider.addScope('profile'); } else { provider.addScope('email'); provider.addScope('public_profile'); }
       const result = await auth.signInWithPopup(provider);
       if (result.user) {
-        await createUserDocument(result.user);
         const profile = await getUserProfile(result.user.uid);
-        onLoginSuccess({
-            uid: result.user.uid,
-            name: result.user.displayName || 'User',
-            email: result.user.email || '',
-            emailVerified: result.user.emailVerified,
-            role: profile?.role || 'customer',
-            photoURL: profile?.photoURL,
-            bag: profile?.bag || [],
-            createdAt: profile?.createdAt,
-            addresses: profile?.addresses || [],
-            shopName: profile?.shopName,
-            shopAddress: profile?.shopAddress,
-            shopImage: profile?.shopImage
-        } as UserState);
+         if (profile?.status === 'banned') {
+              setError("This account has been banned.");
+              await auth.signOut();
+              setIsLoading(false);
+              return;
+          }
+         if (profile?.status === 'suspended') {
+              const isExpired = await checkSuspensionExpiry(result.user.uid);
+              if (!isExpired) {
+                  setError("This account has been suspended.");
+                  await auth.signOut();
+                  setIsLoading(false);
+                  return;
+              }
+          }
+
+        if (!profile) await createUserDocument(result.user);
+        const updatedProfile = await getUserProfile(result.user.uid);
+
+        onLoginSuccess({ uid: result.user.uid, name: result.user.displayName || 'User', email: result.user.email || '', emailVerified: result.user.emailVerified, role: updatedProfile?.role || 'customer', photoURL: updatedProfile?.photoURL, bag: updatedProfile?.bag || [], createdAt: updatedProfile?.createdAt, addresses: updatedProfile?.addresses || [], shopName: updatedProfile?.shopName, shopAddress: updatedProfile?.shopAddress, shopProvince: updatedProfile?.shopProvince, shopCity: updatedProfile?.shopCity, shopBarangay: updatedProfile?.shopBarangay, shopImage: updatedProfile?.shopImage, status: updatedProfile?.status, suspensionEndDate: updatedProfile?.suspensionEndDate } as UserState);
       }
       onClose();
-    } catch (err: any) {
-      console.error(err);
-      setError(getErrorMessage(err));
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (err: any) { console.error(err); setError(getErrorMessage(err)); } finally { setIsLoading(false); }
   };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-scale-in">
-        <div className="bg-brand-cream px-8 py-6 border-b border-stone-100 flex justify-between items-center">
-          <div>
-            <h2 className="text-2xl font-serif font-bold text-brand-blue">{mode === 'login' ? 'Welcome Back' : 'Join Tatak Norte'}</h2>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-stone-200 rounded-full transition-colors"><X className="w-5 h-5 text-stone-500" /></button>
-        </div>
+        <div className="bg-brand-cream px-8 py-6 border-b border-stone-100 flex justify-between items-center"><div><h2 className="text-2xl font-serif font-bold text-brand-blue">{mode === 'login' ? 'Welcome Back' : 'Join Tatak Norte'}</h2></div><button onClick={onClose} className="p-2 hover:bg-stone-200 rounded-full transition-colors"><X className="w-5 h-5 text-stone-500" /></button></div>
         <div className="p-8">
           {error && <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-r-lg text-sm">{error}</div>}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === 'register' && (
-              <input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-stone-300 bg-white" placeholder="Full Name" />
-            )}
+            {mode === 'register' && (<input type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-stone-300 bg-white" placeholder="Full Name" />)}
             <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-stone-300 bg-white" placeholder="Email Address" />
-            <div className="relative">
-              <input type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 pr-10 rounded-lg border border-stone-300 bg-white" placeholder="Password" />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">{showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}</button>
-            </div>
-            <button type="submit" disabled={isLoading} className="w-full py-3 bg-brand-blue text-white rounded-xl font-medium mt-6">
-              {isLoading ? <Loader className="w-5 h-5 animate-spin mx-auto" /> : (mode === 'login' ? 'Sign In' : 'Create Account')}
-            </button>
+            <div className="relative"><input type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 pr-10 rounded-lg border border-stone-300 bg-white" placeholder="Password" /><button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">{showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}</button></div>
+            <button type="submit" disabled={isLoading} className="w-full py-3 bg-brand-blue text-white rounded-xl font-medium mt-6">{isLoading ? <Loader className="w-5 h-5 animate-spin mx-auto" /> : (mode === 'login' ? 'Sign In' : 'Create Account')}</button>
           </form>
-          {mode === 'login' && (
-             <div className="mt-4">
-                <button onClick={handleGuestLogin} className="w-full py-3 bg-stone-100 text-stone-600 rounded-xl font-medium hover:bg-stone-200">Continue as Guest</button>
-                <div className="mt-6 grid grid-cols-2 gap-4">
-                  <button type="button" onClick={() => handleSocialLogin('Facebook')} className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white">Facebook</button>
-                  <button type="button" onClick={() => handleSocialLogin('Google')} className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white">Google</button>
-                </div>
-             </div>
-          )}
-          <div className="mt-8 text-center text-sm">
-            <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="font-bold text-brand-blue">{mode === 'login' ? 'Sign up' : 'Log in'}</button>
-          </div>
+          {mode === 'login' && (<div className="mt-4"><button onClick={handleGuestLogin} className="w-full py-3 bg-stone-100 text-stone-600 rounded-xl font-medium hover:bg-stone-200">Continue as Guest</button><div className="mt-6 grid grid-cols-2 gap-4"><button type="button" onClick={() => handleSocialLogin('Facebook')} className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white">Facebook</button><button type="button" onClick={() => handleSocialLogin('Google')} className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl border border-stone-200 bg-white">Google</button></div></div>)}
+          <div className="mt-8 text-center text-sm"><button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="font-bold text-brand-blue">{mode === 'login' ? 'Sign up' : 'Log in'}</button></div>
         </div>
       </div>
     </div>
@@ -791,184 +651,45 @@ const CheckoutModal: React.FC<any> = ({ isOpen, onClose, cart, onCheckoutSubmit,
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <div className="bg-brand-cream rounded-3xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-scale-in shadow-2xl">
                 <div className="bg-white px-8 py-5 flex justify-between items-center border-b border-stone-100">
-                    <div className="flex items-center gap-3">
-                        <ShoppingBag className="w-6 h-6 text-brand-blue" />
-                        <h2 className="font-serif font-bold text-2xl text-brand-blue">Checkout</h2>
-                    </div>
+                    <div className="flex items-center gap-3"><ShoppingBag className="w-6 h-6 text-brand-blue" /><h2 className="font-serif font-bold text-2xl text-brand-blue">Checkout</h2></div>
                     <button onClick={onClose} className="p-2 hover:bg-stone-100 rounded-full transition-colors"><X className="w-6 h-6 text-stone-500" /></button>
                 </div>
-                
                 <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
                     <div className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-8 bg-white lg:border-r border-stone-100">
                         {deliveryMethod === 'Standard' && (
                             <section>
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2"><MapPin className="w-4 h-4" /> Shipping Address</h3>
-                                    {viewMode === 'view' && selectedAddress && (
-                                        <button onClick={() => setViewMode('list')} className="text-xs font-bold text-brand-blue hover:underline">Change</button>
-                                    )}
-                                    {viewMode === 'list' && (
-                                        <button onClick={() => setViewMode('create')} className="text-xs font-bold text-brand-blue hover:underline">+ Add New</button>
-                                    )}
-                                    {(viewMode === 'list' || viewMode === 'create') && selectedAddress && (
-                                         <button onClick={() => setViewMode('view')} className="text-xs font-bold text-stone-500 hover:underline ml-3">Cancel</button>
-                                    )}
+                                    {viewMode === 'view' && selectedAddress && (<button onClick={() => setViewMode('list')} className="text-xs font-bold text-brand-blue hover:underline">Change</button>)}
+                                    {viewMode === 'list' && (<button onClick={() => setViewMode('create')} className="text-xs font-bold text-brand-blue hover:underline">+ Add New</button>)}
+                                    {(viewMode === 'list' || viewMode === 'create') && selectedAddress && (<button onClick={() => setViewMode('view')} className="text-xs font-bold text-stone-500 hover:underline ml-3">Cancel</button>)}
                                 </div>
-                                
                                 {viewMode === 'create' ? (
                                     <div className="bg-stone-50 p-6 rounded-xl border border-stone-200 space-y-4 animate-fade-in-up">
-                                         <div className="grid grid-cols-2 gap-4">
-                                            <input className="w-full p-3 border border-stone-200 rounded-lg bg-white focus:ring-2 focus:ring-brand-blue/20 outline-none" placeholder="Full Name" value={fullName} onChange={e => setFullName(e.target.value)} />
-                                            <input className="w-full p-3 border border-stone-200 rounded-lg bg-white focus:ring-2 focus:ring-brand-blue/20 outline-none" placeholder="Mobile Number" value={mobileNumber} onChange={e => setMobileNumber(e.target.value)} />
-                                         </div>
+                                         <div className="grid grid-cols-2 gap-4"><input className="w-full p-3 border border-stone-200 rounded-lg bg-white focus:ring-2 focus:ring-brand-blue/20 outline-none" placeholder="Full Name" value={fullName} onChange={e => setFullName(e.target.value)} /><input className="w-full p-3 border border-stone-200 rounded-lg bg-white focus:ring-2 focus:ring-brand-blue/20 outline-none" placeholder="Mobile Number" value={mobileNumber} onChange={e => setMobileNumber(e.target.value)} /></div>
                                          <div className="grid grid-cols-3 gap-4">
-                                            <select className="w-full p-3 border border-stone-200 rounded-lg bg-white" value={selectedProvinceCode} onChange={handleProvinceChange}>
-                                                <option value="">Select Province</option>
-                                                {provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}
-                                            </select>
-                                            <select className="w-full p-3 border border-stone-200 rounded-lg bg-white" value={selectedCityCode} onChange={handleCityChange} disabled={!selectedProvinceCode}>
-                                                <option value="">Select City</option>
-                                                {cities.map(c => <option key={c.code} value={c.name}>{c.name}</option>)}
-                                            </select>
-                                            <select className="w-full p-3 border border-stone-200 rounded-lg bg-white" value={selectedBarangayName} onChange={e => setSelectedBarangayName(e.target.value)} disabled={!selectedCityCode}>
-                                                <option value="">Select Barangay</option>
-                                                {barangays.map(b => <option key={b.code} value={b.name}>{b.name}</option>)}
-                                            </select>
+                                            <select className="w-full p-3 border border-stone-200 rounded-lg bg-white" value={selectedProvinceCode} onChange={handleProvinceChange}><option value="">Select Province</option>{provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}</select>
+                                            <select className="w-full p-3 border border-stone-200 rounded-lg bg-white" value={selectedCityCode} onChange={handleCityChange} disabled={!selectedProvinceCode}><option value="">Select City</option>{cities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}</select>
+                                            <select className="w-full p-3 border border-stone-200 rounded-lg bg-white" value={selectedBarangayName} onChange={e => setSelectedBarangayName(e.target.value)} disabled={!selectedCityCode}><option value="">Select Barangay</option>{barangays.map(b => <option key={b.code} value={b.name}>{b.name}</option>)}</select>
                                          </div>
                                          <input className="w-full p-3 border border-stone-200 rounded-lg bg-white" placeholder="Street Address, Landmark, etc." value={street} onChange={e => setStreet(e.target.value)} />
-                                         <div className="flex justify-end gap-3 pt-2">
-                                             <button onClick={() => setViewMode(user?.addresses?.length > 0 ? 'list' : 'view')} className="px-4 py-2 text-stone-500 font-bold hover:bg-stone-200 rounded-lg">Cancel</button>
-                                             <button onClick={() => {
-                                                 const addr: Address = { fullName, mobileNumber, province: selectedProvinceName, city: selectedCityName, barangay: selectedBarangayName, street, zipCode: '0000' };
-                                                 onSaveAddress(addr).then((saved: Address) => { setSelectedAddress(saved); setViewMode('view'); });
-                                             }} className="px-6 py-2 bg-brand-blue text-white rounded-lg font-bold shadow-lg shadow-blue-900/10">Save Address</button>
-                                         </div>
+                                         <div className="flex justify-end gap-3 pt-2"><button onClick={() => setViewMode(user?.addresses?.length > 0 ? 'list' : 'view')} className="px-4 py-2 text-stone-500 font-bold hover:bg-stone-200 rounded-lg">Cancel</button><button onClick={() => { const addr: Address = { fullName, mobileNumber, province: selectedProvinceName, city: selectedCityName, barangay: selectedBarangayName, street, zipCode: '0000' }; onSaveAddress(addr).then((saved: Address) => { setSelectedAddress(saved); setViewMode('view'); }); }} className="px-6 py-2 bg-brand-blue text-white rounded-lg font-bold shadow-lg shadow-blue-900/10">Save Address</button></div>
                                     </div>
                                 ) : viewMode === 'list' ? (
-                                    <div className="space-y-3">
-                                        {user?.addresses?.length > 0 ? (
-                                            user.addresses.map((addr: Address, idx: number) => (
-                                                <div 
-                                                    key={idx} 
-                                                    onClick={() => { setSelectedAddress(addr); setViewMode('view'); }}
-                                                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-start justify-between group ${selectedAddress === addr ? 'border-brand-blue bg-blue-50/30' : 'border-stone-100 hover:border-brand-blue/50'}`}
-                                                >
-                                                    <div>
-                                                        <div className="font-bold text-stone-900 flex items-center gap-2">
-                                                            {addr.fullName} <span className="text-stone-400 font-normal text-sm">| {addr.mobileNumber}</span>
-                                                        </div>
-                                                        <div className="text-sm text-stone-600 mt-1">
-                                                            {addr.street}, {addr.barangay}, {addr.city}, {addr.province}
-                                                        </div>
-                                                    </div>
-                                                    {selectedAddress === addr && <CheckCircle className="w-5 h-5 text-brand-blue" />}
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <div className="text-center p-4">No addresses found.</div>
-                                        )}
-                                    </div>
+                                    <div className="space-y-3">{user?.addresses?.length > 0 ? (user.addresses.map((addr: Address, idx: number) => (<div key={idx} onClick={() => { setSelectedAddress(addr); setViewMode('view'); }} className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-start justify-between group ${selectedAddress === addr ? 'border-brand-blue bg-blue-50/30' : 'border-stone-100 hover:border-brand-blue/50'}`}><div><div className="font-bold text-stone-900 flex items-center gap-2">{addr.fullName} <span className="text-stone-400 font-normal text-sm">| {addr.mobileNumber}</span></div><div className="text-sm text-stone-600 mt-1">{addr.street}, {addr.barangay}, {addr.city}, {addr.province}</div></div>{selectedAddress === addr && <CheckCircle className="w-5 h-5 text-brand-blue" />}</div>))) : (<div className="text-center p-4">No addresses found.</div>)}</div>
                                 ) : (
-                                    <div>
-                                        {selectedAddress ? (
-                                            <div className="p-4 rounded-xl border-2 border-brand-blue bg-blue-50/30 flex items-start justify-between">
-                                                <div>
-                                                    <div className="font-bold text-stone-900 flex items-center gap-2">
-                                                        {selectedAddress.fullName} <span className="text-stone-400 font-normal text-sm">| {selectedAddress.mobileNumber}</span>
-                                                    </div>
-                                                    <div className="text-sm text-stone-600 mt-1">
-                                                        {selectedAddress.street}, {selectedAddress.barangay}, {selectedAddress.city}, {selectedAddress.province}
-                                                    </div>
-                                                </div>
-                                                <CheckCircle className="w-5 h-5 text-brand-blue" />
-                                            </div>
-                                        ) : (
-                                            <button onClick={() => setViewMode('create')} className="w-full py-8 border-2 border-dashed border-stone-300 rounded-xl text-stone-500 font-bold hover:border-brand-blue hover:text-brand-blue hover:bg-blue-50 transition-colors">
-                                                + Add Delivery Address
-                                            </button>
-                                        )}
-                                    </div>
+                                    <div>{selectedAddress ? (<div className="p-4 rounded-xl border-2 border-brand-blue bg-blue-50/30 flex items-start justify-between"><div><div className="font-bold text-stone-900 flex items-center gap-2">{selectedAddress.fullName} <span className="text-stone-400 font-normal text-sm">| {selectedAddress.mobileNumber}</span></div><div className="text-sm text-stone-600 mt-1">{selectedAddress.street}, {selectedAddress.barangay}, {selectedAddress.city}, {selectedAddress.province}</div></div><CheckCircle className="w-5 h-5 text-brand-blue" /></div>) : (<button onClick={() => setViewMode('create')} className="w-full py-8 border-2 border-dashed border-stone-300 rounded-xl text-stone-500 font-bold hover:border-brand-blue hover:text-brand-blue hover:bg-blue-50 transition-colors">+ Add Delivery Address</button>)}</div>
                                 )}
                             </section>
                         )}
-
-                         <section>
-                            <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Truck className="w-4 h-4" /> Delivery Method</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <button 
-                                    onClick={() => setDeliveryMethod('Standard')}
-                                    className={`p-4 rounded-xl border-2 text-left transition-all ${deliveryMethod === 'Standard' ? 'border-brand-blue bg-blue-50/50' : 'border-stone-100 hover:border-stone-200'}`}
-                                >
-                                    <div className="font-bold text-brand-blue mb-1">Standard Delivery</div>
-                                    <div className="text-sm text-stone-500">J&T Express (3-5 days)</div>
-                                    <div className="text-sm font-bold mt-2">₱120.00</div>
-                                </button>
-                                <button 
-                                    onClick={() => setDeliveryMethod('Pickup')}
-                                    className={`p-4 rounded-xl border-2 text-left transition-all ${deliveryMethod === 'Pickup' ? 'border-brand-blue bg-blue-50/50' : 'border-stone-100 hover:border-stone-200'}`}
-                                >
-                                    <div className="font-bold text-brand-blue mb-1">Store Pickup</div>
-                                    <div className="text-sm text-stone-500">Pick up from artisan</div>
-                                    <div className="text-sm font-bold mt-2">Free</div>
-                                </button>
-                            </div>
-                        </section>
-
-                        <section>
-                            <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider mb-4 flex items-center gap-2"><CreditCard className="w-4 h-4" /> Payment Method</h3>
-                            <div className="space-y-3">
-                                {['COD', 'GCash', 'PayMaya'].map((method) => (
-                                    <label key={method} className={`flex items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${paymentMethod === method ? 'border-brand-blue bg-blue-50/50' : 'border-stone-100 hover:border-stone-200'}`}>
-                                        <input type="radio" name="payment" className="w-4 h-4 text-brand-blue focus:ring-brand-blue" checked={paymentMethod === method} onChange={() => setPaymentMethod(method as PaymentMethod)} />
-                                        <span className="font-medium text-stone-900">{method === 'COD' ? 'Cash on Delivery' : method}</span>
-                                    </label>
-                                ))}
-                            </div>
-                        </section>
+                         <section><h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Truck className="w-4 h-4" /> Delivery Method</h3><div className="grid grid-cols-2 gap-4"><button onClick={() => setDeliveryMethod('Standard')} className={`p-4 rounded-xl border-2 text-left transition-all ${deliveryMethod === 'Standard' ? 'border-brand-blue bg-blue-50/50' : 'border-stone-100 hover:border-stone-200'}`}><div className="font-bold text-brand-blue mb-1">Standard Delivery</div><div className="text-sm text-stone-500">J&T Express (3-5 days)</div><div className="text-sm font-bold mt-2">₱120.00</div></button><button onClick={() => setDeliveryMethod('Pickup')} className={`p-4 rounded-xl border-2 text-left transition-all ${deliveryMethod === 'Pickup' ? 'border-brand-blue bg-blue-50/50' : 'border-stone-100 hover:border-stone-200'}`}><div className="font-bold text-brand-blue mb-1">Store Pickup</div><div className="text-sm text-stone-500">Pick up from artisan</div><div className="text-sm font-bold mt-2">Free</div></button></div></section>
+                        <section><h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider mb-4 flex items-center gap-2"><CreditCard className="w-4 h-4" /> Payment Method</h3><div className="space-y-3">{['COD', 'GCash', 'PayMaya'].map((method) => (<label key={method} className={`flex items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${paymentMethod === method ? 'border-brand-blue bg-blue-50/50' : 'border-stone-100 hover:border-stone-200'}`}><input type="radio" name="payment" className="w-4 h-4 text-brand-blue focus:ring-brand-blue" checked={paymentMethod === method} onChange={() => setPaymentMethod(method as PaymentMethod)} /><span className="font-medium text-stone-900">{method === 'COD' ? 'Cash on Delivery' : method}</span></label>))}</div></section>
                     </div>
-
                     <div className="w-full lg:w-96 bg-stone-50 p-6 lg:p-8 flex flex-col h-full lg:border-l border-stone-200">
                         <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider mb-6">Order Summary</h3>
-                        
-                        <div className="flex-1 overflow-y-auto pr-2 space-y-4 mb-6">
-                            {cart.map((item: any, idx: number) => (
-                                <div key={idx} className="flex gap-4 items-start">
-                                    <div className="w-16 h-16 rounded-lg bg-white border border-stone-200 overflow-hidden flex-shrink-0">
-                                        <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-bold text-stone-900 line-clamp-2">{item.name}</p>
-                                        {item.selectedVariation && <p className="text-xs text-stone-500">{item.selectedVariation.name}</p>}
-                                        <div className="flex justify-between mt-1">
-                                            <p className="text-xs text-stone-500">Qty: {item.quantity}</p>
-                                            <p className="text-sm font-bold text-stone-900">₱{(item.price * item.quantity).toLocaleString()}</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="border-t border-stone-200 pt-6 space-y-3">
-                            <div className="flex justify-between text-stone-600 text-sm">
-                                <span>Subtotal</span>
-                                <span>₱{subtotal.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-stone-600 text-sm">
-                                <span>Shipping Fee</span>
-                                <span>{shippingCost === 0 ? 'Free' : `₱${shippingCost.toLocaleString()}`}</span>
-                            </div>
-                            <div className="flex justify-between text-brand-blue font-bold text-xl pt-2 border-t border-stone-200 mt-2">
-                                <span>Total</span>
-                                <span>₱{total.toLocaleString()}</span>
-                            </div>
-                        </div>
-
-                        <button 
-                            onClick={handleSubmit} 
-                            className="w-full mt-6 py-4 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2"
-                        >
-                            Place Order <ArrowRight className="w-5 h-5" />
-                        </button>
+                        <div className="flex-1 overflow-y-auto pr-2 space-y-4 mb-6">{cart.map((item: any, idx: number) => (<div key={idx} className="flex gap-4 items-start"><div className="w-16 h-16 rounded-lg bg-white border border-stone-200 overflow-hidden flex-shrink-0"><img src={item.image} className="w-full h-full object-cover" alt={item.name} /></div><div className="flex-1 min-w-0"><p className="text-sm font-bold text-stone-900 line-clamp-2">{item.name}</p>{item.selectedVariation && <p className="text-xs text-stone-500">{item.selectedVariation.name}</p>}<div className="flex justify-between mt-1"><p className="text-xs text-stone-500">Qty: {item.quantity}</p><p className="text-sm font-bold text-stone-900">₱{(item.price * item.quantity).toLocaleString()}</p></div></div></div>))}</div>
+                        <div className="border-t border-stone-200 pt-6 space-y-3"><div className="flex justify-between text-stone-600 text-sm"><span>Subtotal</span><span>₱{subtotal.toLocaleString()}</span></div><div className="flex justify-between text-stone-600 text-sm"><span>Shipping Fee</span><span>{shippingCost === 0 ? 'Free' : `₱${shippingCost.toLocaleString()}`}</span></div><div className="flex justify-between text-brand-blue font-bold text-xl pt-2 border-t border-stone-200 mt-2"><span>Total</span><span>₱{total.toLocaleString()}</span></div></div>
+                        <button onClick={handleSubmit} className="w-full mt-6 py-4 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2">Place Order <ArrowRight className="w-5 h-5" /></button>
                     </div>
                 </div>
             </div>
@@ -977,7 +698,7 @@ const CheckoutModal: React.FC<any> = ({ isOpen, onClose, cart, onCheckoutSubmit,
 };
 
 const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGlobalData }) => {
-    // FIX: Safely access user.role to prevent crash if user is null during initial render
+    // ... (Dashboard content remains the same)
     const [activeTab, setActiveTab] = useState(user?.role === 'admin' ? 'applications' : 'products');
     const [isAddProductOpen, setIsAddProductOpen] = useState(false);
     const [isProductManagerOpen, setIsProductManagerOpen] = useState(false);
@@ -985,57 +706,24 @@ const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGl
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
     const [orders, setOrders] = useState<Order[]>([]);
     const [sellerApps, setSellerApps] = useState<SellerApplication[]>([]);
-    
-    // Shop Settings State
-    const [shopName, setShopName] = useState(user?.shopName || '');
-    const [shopAddress, setShopAddress] = useState(user?.shopAddress || '');
-    const [shopImageFile, setShopImageFile] = useState<File | null>(null);
-    const [isSavingSettings, setIsSavingSettings] = useState(false);
+    const [sellersList, setSellersList] = useState<UserProfile[]>([]);
 
-    // PH Address Selectors for Shop
-    const [provinces, setProvinces] = useState<LocationCode[]>([]);
-    const [cities, setCities] = useState<LocationCode[]>([]);
-    const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
-    const [selectedCityCode, setSelectedCityCode] = useState('');
+    // Suspension Modal State
+    const [isSuspendModalOpen, setIsSuspendModalOpen] = useState(false);
+    const [sellerToSuspend, setSellerToSuspend] = useState<UserProfile | null>(null);
 
     useEffect(() => {
         if (user) {
             fetchOrders('seller', user.uid).then(setOrders);
-            setShopName(user.shopName || '');
-            setShopAddress(user.shopAddress || '');
 
             if (user.role === 'admin') {
                 fetchSellerApplications('pending').then(setSellerApps);
+                fetchApprovedSellers().then(setSellersList);
             }
         }
-        fetchProvinces().then(setProvinces);
     }, [user]);
     
-    // FIX: Safely access user.uid and user.role
     const sellerProducts = products && user ? products.filter((p: any) => p.sellerId === user.uid || user.role === 'admin') : [];
-
-    const handleSaveSettings = async () => {
-        if (!user) return;
-        setIsSavingSettings(true);
-        try {
-            let imageUrl = user.shopImage;
-            if (shopImageFile) {
-                imageUrl = await uploadShopImage(user.uid, shopImageFile);
-            }
-            await updateUserProfile(user.uid, {
-                shopName,
-                shopAddress,
-                shopImage: imageUrl || undefined
-            });
-            await onUpdateProfile();
-            alert("Shop settings saved!");
-        } catch (error) {
-            console.error(error);
-            alert("Failed to save settings");
-        } finally {
-            setIsSavingSettings(false);
-        }
-    };
 
     const handleApproveApp = async (app: SellerApplication) => {
         if (window.confirm(`Approve ${app.businessName} as a seller?`)) {
@@ -1043,7 +731,8 @@ const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGl
             if (success) {
                 alert("Seller approved successfully!");
                 setSellerApps(sellerApps.filter(a => a.id !== app.id));
-                // Technically we should also refresh the user list if displayed, but sufficient for now.
+                // Refresh sellers list after approval
+                fetchApprovedSellers().then(setSellersList);
             } else {
                 alert("Failed to approve seller.");
             }
@@ -1059,14 +748,55 @@ const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGl
         }
     };
 
+    const handleUserAction = async (seller: UserProfile, action: 'ban' | 'suspend' | 'activate' | 'remove') => {
+        if (action === 'suspend') {
+            setSellerToSuspend(seller);
+            setIsSuspendModalOpen(true);
+            return;
+        }
+
+        const actionText = action === 'ban' ? 'Ban' : action === 'activate' ? 'Activate' : 'Remove';
+        if (window.confirm(`Are you sure you want to ${actionText} seller ${seller.shopName || seller.displayName}?`)) {
+            let success = false;
+            
+            if (action === 'remove') {
+                success = await deleteUserDocument(seller.uid);
+            } else {
+                 const status = action === 'activate' ? 'active' : 'banned';
+                 success = await updateUserStatus(seller.uid, status);
+            }
+
+            if (success) {
+                alert(`Seller ${actionText} successful.`);
+                fetchApprovedSellers().then(setSellersList);
+                onRefreshGlobalData(); // Refresh to update product visibility
+            } else {
+                alert(`Failed to ${action} seller.`);
+            }
+        }
+    }
+
+    const confirmSuspend = async (days: number) => {
+        if (!sellerToSuspend) return;
+        const success = await updateUserStatus(sellerToSuspend.uid, 'suspended', days);
+        if (success) {
+            alert(`Seller suspended for ${days} days.`);
+            fetchApprovedSellers().then(setSellersList);
+            onRefreshGlobalData();
+            setIsSuspendModalOpen(false);
+            setSellerToSuspend(null);
+        } else {
+            alert("Failed to suspend seller.");
+        }
+    }
+
     const isAdmin = user?.role === 'admin';
 
-    // FIX: Guard clause if user is not logged in
     if (!user) return <div className="p-20 text-center animate-fade-in-up">Please log in to access the dashboard.</div>;
 
     const tabs = isAdmin 
-        ? ['applications', 'products', 'settings']
-        : ['products', 'orders', 'settings'];
+        ? ['applications', 'sellers', 'products']
+        : ['products', 'orders'];
 
     return (
         <div className="max-w-7xl mx-auto px-4 py-8 animate-fade-in-up">
@@ -1123,11 +853,104 @@ const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGl
                 </div>
             )}
 
+            {activeTab === 'sellers' && isAdmin && (
+                <div className="space-y-4">
+                     {sellersList.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {sellersList.map(seller => (
+                                <div key={seller.uid} className={`bg-white p-6 rounded-2xl border shadow-sm flex flex-col gap-4 relative overflow-hidden ${seller.status === 'banned' ? 'border-red-200 bg-red-50' : seller.status === 'suspended' ? 'border-orange-200 bg-orange-50' : 'border-stone-200'}`}>
+                                     {seller.status === 'banned' && (
+                                         <div className="absolute top-0 right-0 bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-bl-xl z-10">BANNED</div>
+                                     )}
+                                     {seller.status === 'suspended' && (
+                                         <div className="absolute top-0 right-0 bg-orange-500 text-white text-xs font-bold px-3 py-1 rounded-bl-xl z-10">SUSPENDED</div>
+                                     )}
+
+                                     <div className="flex items-center gap-4">
+                                         <div className="w-16 h-16 rounded-full bg-stone-100 overflow-hidden border border-stone-200 flex-shrink-0">
+                                            {seller.shopImage ? (
+                                                <img src={seller.shopImage} className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-xl font-bold text-stone-300">
+                                                    <Store className="w-8 h-8" />
+                                                </div>
+                                            )}
+                                         </div>
+                                         <div className="min-w-0">
+                                             <h3 className="font-bold text-lg text-stone-900 truncate">{seller.shopName || 'Unnamed Shop'}</h3>
+                                             <p className="text-sm text-stone-500 truncate">{seller.email}</p>
+                                             {seller.status === 'suspended' && seller.suspensionEndDate && (
+                                                 <p className="text-xs text-orange-600 font-bold mt-1">
+                                                     Until: {new Date(seller.suspensionEndDate.seconds * 1000).toLocaleDateString()}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+                                     <div className="space-y-2 text-sm text-stone-600">
+                                         <div className="flex items-center gap-2">
+                                             <User className="w-4 h-4 text-stone-400" />
+                                             <span className="truncate">{seller.displayName}</span>
+                                         </div>
+                                         <div className="flex items-center gap-2">
+                                             <MapPin className="w-4 h-4 text-stone-400" />
+                                             <span className="truncate">{seller.shopAddress || 'No address set'}</span>
+                                         </div>
+                                     </div>
+                                     <div className="mt-auto pt-4 border-t border-stone-100 flex justify-between items-center text-xs">
+                                          <div className="flex gap-2">
+                                             {seller.status !== 'banned' && seller.status !== 'suspended' && (
+                                                  <>
+                                                    <button onClick={() => handleUserAction(seller, 'suspend')} className="p-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 border border-orange-200" title="Suspend User">
+                                                        <PauseCircle className="w-4 h-4" />
+                                                    </button>
+                                                    <button onClick={() => handleUserAction(seller, 'ban')} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 border border-red-200" title="Ban User">
+                                                        <ShieldBan className="w-4 h-4" />
+                                                    </button>
+                                                  </>
+                                             )}
+                                             {(seller.status === 'banned' || seller.status === 'suspended') && (
+                                                <button onClick={() => handleUserAction(seller, 'activate')} className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 border border-green-200" title="Activate User">
+                                                    <PlayCircle className="w-4 h-4" />
+                                                </button>
+                                             )}
+                                             <button onClick={() => handleUserAction(seller, 'remove')} className="p-2 bg-stone-50 text-stone-500 rounded-lg hover:bg-red-50 hover:text-red-500 border border-stone-200 hover:border-red-200" title="Remove User">
+                                                <Trash2 className="w-4 h-4" />
+                                             </button>
+                                          </div>
+                                          <span className="text-stone-400">Since {seller.createdAt ? new Date(seller.createdAt.seconds * 1000).getFullYear() : 'N/A'}</span>
+                                     </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-stone-200 text-stone-500">
+                             No approved sellers found.
+                        </div>
+                    )}
+                </div>
+            )}
+
             {activeTab === 'products' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                     {sellerProducts.length > 0 ? (
                         sellerProducts.map((p: any) => (
-                            <ProductCard key={p.id} product={p} onClick={() => { setSelectedProduct(p); setIsProductManagerOpen(true); }} />
+                            <div key={p.id} className="relative group">
+                                <ProductCard product={p} onClick={() => { setSelectedProduct(p); setIsProductManagerOpen(true); }} />
+                                {p.sellerStatus === 'suspended' && (
+                                    <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex items-center justify-center rounded-2xl pointer-events-none">
+                                        <div className="bg-orange-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm">
+                                            Suspended
+                                        </div>
+                                    </div>
+                                )}
+                                {p.sellerStatus === 'banned' && (
+                                    <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex items-center justify-center rounded-2xl pointer-events-none">
+                                        <div className="bg-red-600 text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm">
+                                            Banned
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         ))
                     ) : (
                         <div className="col-span-full p-10 text-center bg-white rounded-2xl border border-stone-200 text-stone-500">
@@ -1143,7 +966,14 @@ const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGl
                         <div key={order.id} className="bg-white p-6 rounded-2xl border border-stone-200">
                              <div className="flex justify-between mb-4">
                                  <div><span className="font-bold text-lg">Order #{order.id.slice(-6)}</span><p className="text-sm text-stone-500">{new Date(order.createdAt?.seconds * 1000).toLocaleDateString()}</p></div>
-                                 <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${order.status === 'Delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{order.status}</span>
+                                 <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
+                                     order.status === 'Delivered' ? 'bg-green-100 text-green-700' : 
+                                     order.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
+                                     order.status === 'Cancellation Requested' ? 'bg-orange-100 text-orange-700' :
+                                     'bg-blue-100 text-blue-700'
+                                 }`}>
+                                     {order.status}
+                                 </span>
                              </div>
                              <div className="space-y-2 mb-4">
                                  {order.items.filter(i => i.sellerId === user.uid).map((item, idx) => (
@@ -1151,60 +981,53 @@ const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGl
                                  ))}
                              </div>
                              {order.status === 'Processing' && <button onClick={async () => { await updateOrderTracking(order.id); fetchOrders('seller', user.uid).then(setOrders); }} className="w-full py-2 bg-brand-blue text-white rounded-lg font-bold">Mark as Shipped</button>}
+                             
+                             {order.status === 'Cancellation Requested' && (
+                                <div className="mt-4 p-4 bg-red-50 rounded-xl border border-red-100">
+                                    <h4 className="font-bold text-red-700 mb-1 flex items-center gap-2">
+                                        <AlertTriangle className="w-4 h-4" /> Cancellation Requested
+                                    </h4>
+                                    <p className="text-sm text-stone-700 mb-3">Reason: "{order.cancellationReason}"</p>
+                                    <div className="flex gap-3">
+                                         <button
+                                            onClick={async () => {
+                                                if(window.confirm("Reject cancellation and return order to Processing?")) {
+                                                     const success = await updateOrderStatus(order.id, 'Processing');
+                                                     if (success) {
+                                                         setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Processing' } : o));
+                                                         fetchOrders('seller', user.uid).then(setOrders);
+                                                     } else {
+                                                         alert("Failed to update order status.");
+                                                     }
+                                                }
+                                            }}
+                                            className="px-4 py-2 bg-white border border-stone-200 rounded-lg text-sm font-bold text-stone-600 hover:bg-stone-50 transition-colors"
+                                         >
+                                            Reject
+                                         </button>
+                                         <button
+                                            onClick={async () => {
+                                                 if(window.confirm("Approve cancellation?")) {
+                                                     const success = await approveOrderCancellation(order.id);
+                                                     if (success) {
+                                                        setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Cancelled' } : o));
+                                                        fetchOrders('seller', user.uid).then(setOrders);
+                                                     } else {
+                                                        alert("Failed to cancel order. Please try again.");
+                                                     }
+                                                }
+                                            }}
+                                            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors"
+                                         >
+                                            Approve Cancellation
+                                         </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     ))}
                     {orders.length === 0 && <p className="text-center py-10 text-stone-500">No orders found.</p>}
                 </div>
-            )}
-
-            {activeTab === 'settings' && (
-                 <div className="max-w-2xl bg-white p-8 rounded-2xl border border-stone-200">
-                     <h2 className="text-xl font-bold mb-6">Edit Shop Profile</h2>
-                     <div className="space-y-6">
-                         <div className="flex items-center gap-6">
-                             <div className="w-24 h-24 rounded-full bg-stone-100 overflow-hidden relative border border-stone-200">
-                                 {shopImageFile ? (
-                                     <img src={URL.createObjectURL(shopImageFile)} className="w-full h-full object-cover" />
-                                 ) : user.shopImage ? (
-                                     <img src={user.shopImage} className="w-full h-full object-cover" />
-                                 ) : (
-                                     <Store className="w-10 h-10 text-stone-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-                                 )}
-                             </div>
-                             <div>
-                                 <label className="px-4 py-2 border border-stone-300 rounded-lg text-sm font-bold cursor-pointer hover:bg-stone-50">
-                                     Upload Logo
-                                     <input type="file" className="hidden" accept="image/*" onChange={e => e.target.files && setShopImageFile(e.target.files[0])} />
-                                 </label>
-                             </div>
-                         </div>
-                         <div>
-                             <label className="block text-sm font-medium mb-1">Shop Name</label>
-                             <input value={shopName} onChange={e => setShopName(e.target.value)} className="w-full px-4 py-2 rounded-lg border bg-white" />
-                         </div>
-                         <div>
-                             <label className="block text-sm font-medium mb-1">Shop Address</label>
-                             <div className="grid grid-cols-2 gap-4 mb-2">
-                                <select className="w-full px-4 py-2 rounded-lg border bg-white" value={selectedProvinceCode} onChange={async e => {
-                                    const code = e.target.value;
-                                    setSelectedProvinceCode(code);
-                                    setCities(await fetchCities(code));
-                                }}>
-                                    <option value="">Select Province</option>
-                                    {provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}
-                                </select>
-                                <select className="w-full px-4 py-2 rounded-lg border bg-white" value={selectedCityCode} onChange={e => setSelectedCityCode(e.target.value)} disabled={!selectedProvinceCode}>
-                                    <option value="">Select City</option>
-                                    {cities.map(c => <option key={c.code} value={c.name}>{c.name}</option>)}
-                                </select>
-                             </div>
-                             <input value={shopAddress} onChange={e => setShopAddress(e.target.value)} className="w-full px-4 py-2 rounded-lg border bg-white" placeholder="Street / Barangay" />
-                         </div>
-                         <button onClick={handleSaveSettings} disabled={isSavingSettings} className="w-full py-3 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800">
-                             {isSavingSettings ? 'Saving...' : 'Save Changes'}
-                         </button>
-                     </div>
-                 </div>
             )}
 
             <AddProductModal 
@@ -1231,11 +1054,17 @@ const Dashboard: React.FC<any> = ({ user, products, onUpdateProfile, onRefreshGl
                     onRefreshGlobalData();
                 }}
             />
+            
+            <SuspendUserModal 
+                isOpen={isSuspendModalOpen}
+                onClose={() => setIsSuspendModalOpen(false)}
+                onConfirm={confirmSuspend}
+                sellerName={sellerToSuspend?.shopName || sellerToSuspend?.displayName || 'Seller'}
+            />
         </div>
     );
 };
 
-// ... (Rest of components: CartPage, HomePage, App shell) ...
 const CartPage: React.FC<any> = ({ cart, onUpdateQuantity, onRemove, onCheckoutClick, onContinueShopping }) => {
     const total = cart.reduce((sum: number, item: any) => sum + item.price * item.quantity, 0);
     return (
@@ -1449,8 +1278,9 @@ const AboutPage: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigat
 );
 
 const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
+    const isSellerOrAdmin = user?.role === 'seller' || user?.role === 'admin';
     const [orders, setOrders] = useState<Order[]>([]);
-    const [activeTab, setActiveTab] = useState('orders');
+    const [activeTab, setActiveTab] = useState(isSellerOrAdmin ? 'shop' : 'orders');
     const [editForm, setEditForm] = useState<{
         displayName: string;
         phoneNumber: string;
@@ -1469,21 +1299,112 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
     const [isTrackingOpen, setIsTrackingOpen] = useState(false);
     const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<Order | null>(null);
 
+    // Shop Settings State
+    const [shopName, setShopName] = useState(user?.shopName || '');
+    const [shopImageFile, setShopImageFile] = useState<File | null>(null);
+    const [isSavingShop, setIsSavingShop] = useState(false);
+    
+    // Shop Location State
+    const [shopProvinceCode, setShopProvinceCode] = useState('');
+    const [shopCityCode, setShopCityCode] = useState('');
+    const [shopProvince, setShopProvince] = useState(user?.shopProvince || '');
+    const [shopCity, setShopCity] = useState(user?.shopCity || '');
+    const [shopBarangay, setShopBarangay] = useState(user?.shopBarangay || '');
+    
+    // Independent lists for shop location to avoid conflicts
+    const [shopCities, setShopCities] = useState<LocationCode[]>([]);
+    const [shopBarangays, setShopBarangays] = useState<LocationCode[]>([]);
+
+    // Address Management State
+    const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
+    const [editingAddressIndex, setEditingAddressIndex] = useState<number | null>(null);
+    const [addressForm, setAddressForm] = useState<Address>({
+        fullName: '', mobileNumber: '', street: '', barangay: '', city: '', province: '', zipCode: '', isDefault: false
+    });
+    
+    // Delete Confirmation State
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [addressToDelete, setAddressToDelete] = useState<number | null>(null);
+
+    // Order Cancellation State
+    const [isCancelOrderModalOpen, setIsCancelOrderModalOpen] = useState(false);
+    const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
+    const [isCancelling, setIsCancelling] = useState(false);
+    
+    // General Location State (for Address Modal & Shared Provinces)
+    const [provinces, setProvinces] = useState<LocationCode[]>([]);
+    const [cities, setCities] = useState<LocationCode[]>([]);
+    const [barangays, setBarangays] = useState<LocationCode[]>([]);
+    const [provCode, setProvCode] = useState('');
+    const [cityCode, setCityCode] = useState('');
+    const [loadingLocation, setLoadingLocation] = useState(false);
+
     useEffect(() => {
         if (user) {
-            setIsLoadingOrders(true);
-            fetchOrders('customer', user.uid).then(data => {
-                setOrders(data);
-                setIsLoadingOrders(false);
-            });
+            if (!isSellerOrAdmin) {
+                setIsLoadingOrders(true);
+                fetchOrders('customer', user.uid).then(data => {
+                    setOrders(data);
+                    setIsLoadingOrders(false);
+                });
+            }
             setEditForm({
                 displayName: user.name || '',
                 phoneNumber: user.phoneNumber || '',
                 gender: user.gender || 'Other',
                 birthDate: user.birthDate || ''
             });
+
+            // Initialize Shop Settings
+            if (isSellerOrAdmin) {
+                setShopName(user.shopName || '');
+                // Note: Shop address fields are handled in the hydration effect below
+            }
         }
-    }, [user]);
+    }, [user, isSellerOrAdmin]);
+
+    // Hydrate Shop Location Logic
+    useEffect(() => {
+        const hydrateShopLocation = async () => {
+            if (isSellerOrAdmin) {
+                const ps = await fetchProvinces();
+                setProvinces(ps); // Share provinces list
+                
+                if (user && user.shopProvince) {
+                    setShopProvince(user.shopProvince);
+                    const p = ps.find(x => x.name === user.shopProvince);
+                    if (p) {
+                        setShopProvinceCode(p.code);
+                        const cs = await fetchCities(p.code);
+                        setShopCities(cs);
+                        
+                        if (user.shopCity) {
+                            setShopCity(user.shopCity);
+                            const c = cs.find(x => x.name === user.shopCity);
+                            if (c) {
+                                setShopCityCode(c.code);
+                                const bs = await fetchBarangays(c.code);
+                                setShopBarangays(bs);
+                                if (user.shopBarangay) {
+                                    setShopBarangay(user.shopBarangay);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        hydrateShopLocation();
+    }, [user, isSellerOrAdmin]);
+
+    // Update active tab if role changes or on initial load
+    useEffect(() => {
+        if (isSellerOrAdmin && !['shop', 'personal'].includes(activeTab)) {
+            setActiveTab('shop');
+        } else if (!isSellerOrAdmin && !['orders', 'personal', 'addresses'].includes(activeTab)) {
+            setActiveTab('orders');
+        }
+    }, [isSellerOrAdmin]);
 
     const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0] && user) {
@@ -1525,15 +1446,177 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
         }
     };
 
-    const handleDeleteAddress = async (index: number) => {
-        if (!user || !user.addresses) return;
-        if (window.confirm("Are you sure you want to remove this address?")) {
-            const newAddresses = [...user.addresses];
-            newAddresses.splice(index, 1);
-            await updateUserProfile(user.uid, { addresses: newAddresses });
+    const handleSaveShopSettings = async () => {
+        if (!user) return;
+        setIsSavingShop(true);
+        try {
+            let imageUrl = user.shopImage;
+            if (shopImageFile) {
+                imageUrl = await uploadShopImage(user.uid, shopImageFile);
+            }
+            // Construct the display address string
+            const fullAddress = [shopBarangay, shopCity, shopProvince].filter(Boolean).join(', ');
+            
+            await updateUserProfile(user.uid, {
+                shopName,
+                shopAddress: fullAddress,
+                shopProvince,
+                shopCity,
+                shopBarangay,
+                shopImage: imageUrl || undefined
+            });
             await onUpdateProfile();
+            alert("Shop settings saved!");
+        } catch (error) {
+            console.error(error);
+            alert("Failed to save settings");
+        } finally {
+            setIsSavingShop(false);
         }
     };
+
+    const handleOpenAddressModal = async (index?: number) => {
+        setIsAddressModalOpen(true);
+        
+        if (index !== undefined && user?.addresses?.[index]) {
+            setEditingAddressIndex(index);
+            const addr = user.addresses[index];
+            setAddressForm(addr);
+            
+            // Pre-fill location data logic
+            setLoadingLocation(true);
+            const ps = await fetchProvinces();
+            setProvinces(ps);
+            
+            // Try to find matching province by name (ignoring case)
+            const p = ps.find(x => x.name.toLowerCase() === addr.province.toLowerCase());
+            
+            if (p) {
+                setProvCode(p.code);
+                const cs = await fetchCities(p.code);
+                setCities(cs);
+                
+                const c = cs.find(x => x.name.toLowerCase() === addr.city.toLowerCase());
+                if (c) {
+                    setCityCode(c.code);
+                    const bs = await fetchBarangays(c.code);
+                    setBarangays(bs);
+                } else {
+                    setCityCode('');
+                    setBarangays([]);
+                }
+            } else {
+                setProvCode('');
+                setCities([]);
+                setCityCode('');
+                setBarangays([]);
+            }
+            setLoadingLocation(false);
+        } else {
+            setEditingAddressIndex(null);
+            setAddressForm({ 
+                fullName: '', 
+                mobileNumber: '', 
+                street: '', 
+                barangay: '', 
+                city: '', 
+                province: '', 
+                zipCode: '',
+                isDefault: user?.addresses?.length === 0 
+            });
+            setProvCode('');
+            setCityCode('');
+            setCities([]);
+            setBarangays([]);
+        }
+    };
+
+    const handleAddressSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!user) return;
+        
+        let newAddresses = [...(user.addresses || [])];
+        const newAddress = { ...addressForm };
+
+        // Handle Default Address Logic
+        if (newAddress.isDefault) {
+             newAddresses = newAddresses.map(a => ({ ...a, isDefault: false }));
+        } else {
+             // If this is the first address, ensure it's default
+             if (newAddresses.length === 0 || (editingAddressIndex !== null && newAddresses.length === 1)) {
+                 newAddress.isDefault = true;
+             }
+        }
+
+        if (editingAddressIndex !== null) {
+            newAddresses[editingAddressIndex] = newAddress;
+        } else {
+            newAddresses.push(newAddress);
+        }
+
+        const success = await updateUserProfile(user.uid, { addresses: newAddresses });
+        if (success) {
+            await onUpdateProfile();
+            setIsAddressModalOpen(false);
+        } else {
+            alert("Failed to save address.");
+        }
+    };
+
+    // Open Modal for Delete Confirmation
+    const confirmDeleteAddress = (index: number) => {
+        setAddressToDelete(index);
+        setIsDeleteModalOpen(true);
+    };
+
+    // Actual Delete Logic
+    const executeDeleteAddress = async () => {
+        if (addressToDelete === null || !user || !user.addresses) return;
+        
+        const newAddresses = [...user.addresses];
+        const deletedAddress = newAddresses[addressToDelete];
+        newAddresses.splice(addressToDelete, 1);
+        
+        // If we deleted the default address and there are others, make the first one default
+        if (deletedAddress.isDefault && newAddresses.length > 0) {
+            newAddresses[0].isDefault = true;
+        }
+
+        const success = await updateUserProfile(user.uid, { addresses: newAddresses });
+        if (success) {
+            await onUpdateProfile();
+            setIsDeleteModalOpen(false);
+            setAddressToDelete(null);
+        } else {
+            alert("Failed to delete address.");
+        }
+    };
+
+    const handleSetDefaultAddress = async (index: number) => {
+        if (!user || !user.addresses) return;
+        const newAddresses = user.addresses.map((addr: Address, i: number) => ({
+            ...addr,
+            isDefault: i === index
+        }));
+        await updateUserProfile(user.uid, { addresses: newAddresses });
+        await onUpdateProfile();
+    };
+
+    const handleCancelOrderClick = (order: Order) => {
+        setOrderToCancel(order);
+        setIsCancelOrderModalOpen(true);
+    }
+
+    const handleSubmitCancellation = async (reason: string) => {
+        if(!orderToCancel || !user) return;
+        setIsCancelling(true);
+        await requestOrderCancellation(orderToCancel.id, reason);
+        // Refresh orders
+        fetchOrders('customer', user.uid).then(setOrders);
+        setIsCancelling(false);
+        setIsCancelOrderModalOpen(false);
+        setOrderToCancel(null);
+    }
 
     if (!user) return <div className="p-20 text-center">Please log in to view profile.</div>;
 
@@ -1584,10 +1667,12 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
                         </div>
                         <p className="text-stone-500 mb-6 flex items-center gap-2"><Mail className="w-4 h-4" /> {user.email}</p>
                         <div className="flex flex-wrap gap-8 text-sm text-stone-600">
-                             <div className="flex items-center gap-2 bg-stone-50 px-4 py-2 rounded-lg border border-stone-100">
-                                 <Package className="w-5 h-5 text-brand-clay" />
-                                 <span className="font-bold text-lg text-stone-900">{orders.length}</span> <span className="text-stone-500">Orders Placed</span>
-                             </div>
+                             {!isSellerOrAdmin && (
+                                 <div className="flex items-center gap-2 bg-stone-50 px-4 py-2 rounded-lg border border-stone-100">
+                                     <Package className="w-5 h-5 text-brand-clay" />
+                                     <span className="font-bold text-lg text-stone-900">{orders.length}</span> <span className="text-stone-500">Orders Placed</span>
+                                 </div>
+                             )}
                              <div className="flex items-center gap-2 bg-stone-50 px-4 py-2 rounded-lg border border-stone-100">
                                  <Calendar className="w-5 h-5 text-brand-clay" />
                                  <span className="text-stone-500">Joined</span> <span className="font-bold text-stone-900">{user.createdAt ? new Date(user.createdAt.seconds * 1000).getFullYear() : new Date().getFullYear()}</span>
@@ -1600,14 +1685,23 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
                     <div className="lg:col-span-3">
                         <div className="sticky top-24">
                             <h3 className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-4 pl-4">Account Menu</h3>
-                            <TabButton id="orders" label="My Orders" icon={<Package className="w-5 h-5" />} />
-                            <TabButton id="settings" label="Profile Settings" icon={<Settings className="w-5 h-5" />} />
-                            <TabButton id="addresses" label="Addresses" icon={<MapPin className="w-5 h-5" />} />
+                            {isSellerOrAdmin ? (
+                                <>
+                                    <TabButton id="shop" label="Shop Profile" icon={<Store className="w-5 h-5" />} />
+                                    <TabButton id="personal" label="Personal Information" icon={<User className="w-5 h-5" />} />
+                                </>
+                            ) : (
+                                <>
+                                    <TabButton id="orders" label="My Orders" icon={<Package className="w-5 h-5" />} />
+                                    <TabButton id="personal" label="Profile Settings" icon={<UserCircle className="w-5 h-5" />} />
+                                    <TabButton id="addresses" label="Addresses" icon={<MapPin className="w-5 h-5" />} />
+                                </>
+                            )}
                         </div>
                     </div>
 
                     <div className="lg:col-span-9">
-                        {activeTab === 'orders' && (
+                        {activeTab === 'orders' && !isSellerOrAdmin && (
                             <div className="space-y-6 animate-scale-in">
                                 <h2 className="text-2xl font-serif font-bold text-stone-900 mb-6">Order History</h2>
                                 {isLoadingOrders ? (
@@ -1629,11 +1723,14 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
                                                      <span className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide flex items-center gap-2 ${
                                                          order.status === 'Delivered' ? 'bg-green-100 text-green-700' : 
                                                          order.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
+                                                         order.status === 'Cancellation Requested' ? 'bg-orange-100 text-orange-700' :
                                                          'bg-blue-100 text-blue-700'
                                                      }`}>
                                                          <div className={`w-2 h-2 rounded-full ${
                                                              order.status === 'Delivered' ? 'bg-green-500' : 
-                                                             order.status === 'Cancelled' ? 'bg-red-500' : 'bg-blue-500'
+                                                             order.status === 'Cancelled' ? 'bg-red-500' : 
+                                                             order.status === 'Cancellation Requested' ? 'bg-orange-500' :
+                                                             'bg-blue-500'
                                                          }`} />
                                                          {order.status}
                                                      </span>
@@ -1641,6 +1738,14 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
                                                          <button onClick={() => { setSelectedTrackingOrder(order); setIsTrackingOpen(true); }} className="px-4 py-1.5 bg-stone-100 hover:bg-stone-200 rounded-full text-xs font-bold text-stone-600 flex items-center gap-2 transition-colors">
                                                              <Truck className="w-3 h-3" /> Track Order
                                                          </button>
+                                                     )}
+                                                     {order.status === 'Processing' && (
+                                                        <button 
+                                                            onClick={() => handleCancelOrderClick(order)}
+                                                            className="px-4 py-1.5 border border-stone-200 hover:bg-stone-50 rounded-full text-xs font-bold text-stone-600 flex items-center gap-2 transition-colors"
+                                                        >
+                                                            Cancel Order
+                                                        </button>
                                                      )}
                                                 </div>
                                             </div>
@@ -1675,94 +1780,194 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
                                 )}
                             </div>
                         )}
-                         {activeTab === 'settings' && (
-                             <div className="bg-white p-8 rounded-3xl border border-stone-100 animate-scale-in shadow-sm">
-                                 <h2 className="text-2xl font-serif font-bold text-stone-900 mb-8">Personal Information</h2>
-                                 {errorMessage && (
-                                     <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-r-lg flex items-center gap-2">
-                                         <AlertCircle className="w-5 h-5" />
-                                         <span className="text-sm font-medium">{errorMessage}</span>
-                                     </div>
-                                 )}
-                                 <form onSubmit={handleEditSubmit} className="space-y-6 max-w-2xl">
-                                      <div className="grid md:grid-cols-2 gap-6">
-                                         <div className="space-y-2">
-                                             <label className="text-sm font-bold text-stone-700">Display Name</label>
-                                             <div className="relative">
-                                                 <User className="w-5 h-5 absolute left-4 top-3.5 text-stone-400" />
-                                                 <input 
-                                                    value={editForm.displayName} 
-                                                    onChange={e => setEditForm({...editForm, displayName: e.target.value})} 
-                                                    className="w-full pl-12 pr-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-stone-50 focus:bg-white" 
-                                                    placeholder="Your Name"
-                                                 />
-                                             </div>
-                                         </div>
-                                         <div className="space-y-2">
-                                             <label className="text-sm font-bold text-stone-700">Phone Number</label>
-                                             <div className="relative">
-                                                 <Phone className="w-5 h-5 absolute left-4 top-3.5 text-stone-400" />
-                                                 <input 
-                                                    value={editForm.phoneNumber} 
-                                                    onChange={e => setEditForm({...editForm, phoneNumber: e.target.value})} 
-                                                    className="w-full pl-12 pr-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-stone-50 focus:bg-white" 
-                                                    placeholder="+63 900 000 0000"
-                                                 />
-                                             </div>
-                                         </div>
-                                     </div>
-                                     <div className="grid md:grid-cols-2 gap-6">
-                                         <div className="space-y-2">
-                                             <label className="text-sm font-bold text-stone-700">Gender</label>
-                                             <div className="relative">
-                                                <select 
-                                                    value={editForm.gender} 
-                                                    onChange={e => setEditForm({...editForm, gender: e.target.value as any})} 
-                                                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all appearance-none bg-stone-50 focus:bg-white"
-                                                >
-                                                    <option value="Male">Male</option>
-                                                    <option value="Female">Female</option>
-                                                    <option value="Other">Other</option>
-                                                </select>
-                                                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
-                                             </div>
-                                         </div>
-                                         <div className="space-y-2">
-                                             <label className="text-sm font-bold text-stone-700">Birthday</label>
-                                             <input 
-                                                type="date" 
-                                                value={editForm.birthDate} 
-                                                onChange={e => setEditForm({...editForm, birthDate: e.target.value})} 
-                                                className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-stone-50 focus:bg-white" 
-                                             />
-                                         </div>
-                                     </div>
-                                     <div className="pt-8 flex justify-end border-t border-stone-100">
-                                         <button type="submit" disabled={isSavingProfile} className="px-8 py-3 bg-brand-blue text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 hover:bg-blue-800 transition-colors flex items-center gap-2">
-                                             {isSavingProfile ? <Loader className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                                             Save Changes
-                                         </button>
-                                     </div>
-                                 </form>
+                         
+                         {activeTab === 'personal' && (
+                             <div className="space-y-8 animate-scale-in">
+                                {/* Personal Information Section */}
+                                <div className="bg-white p-8 rounded-3xl border border-stone-100 shadow-sm">
+                                    <h2 className="text-2xl font-serif font-bold text-stone-900 mb-8">Personal Information</h2>
+                                    {errorMessage && (
+                                        <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-r-lg flex items-center gap-2">
+                                            <AlertCircle className="w-5 h-5" />
+                                            <span className="text-sm font-medium">{errorMessage}</span>
+                                        </div>
+                                    )}
+                                    <form onSubmit={handleEditSubmit} className="space-y-6 max-w-2xl">
+                                        <div className="grid md:grid-cols-2 gap-6">
+                                            <div className="space-y-2">
+                                                <label className="text-sm font-bold text-stone-700">Display Name</label>
+                                                <div className="relative">
+                                                    <User className="w-5 h-5 absolute left-4 top-3.5 text-stone-400" />
+                                                    <input 
+                                                        value={editForm.displayName} 
+                                                        onChange={e => setEditForm({...editForm, displayName: e.target.value})} 
+                                                        className="w-full pl-12 pr-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-stone-50 focus:bg-white" 
+                                                        placeholder="Your Name"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-sm font-bold text-stone-700">Phone Number</label>
+                                                <div className="relative">
+                                                    <Phone className="w-5 h-5 absolute left-4 top-3.5 text-stone-400" />
+                                                    <input 
+                                                        value={editForm.phoneNumber} 
+                                                        onChange={e => setEditForm({...editForm, phoneNumber: e.target.value})} 
+                                                        className="w-full pl-12 pr-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-stone-50 focus:bg-white" 
+                                                        placeholder="+63 900 000 0000"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="grid md:grid-cols-2 gap-6">
+                                            <div className="space-y-2">
+                                                <label className="text-sm font-bold text-stone-700">Gender</label>
+                                                <div className="relative">
+                                                    <select 
+                                                        value={editForm.gender} 
+                                                        onChange={e => setEditForm({...editForm, gender: e.target.value as any})} 
+                                                        className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all appearance-none bg-stone-50 focus:bg-white"
+                                                    >
+                                                        <option value="Male">Male</option>
+                                                        <option value="Female">Female</option>
+                                                        <option value="Other">Other</option>
+                                                    </select>
+                                                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-sm font-bold text-stone-700">Birthday</label>
+                                                <input 
+                                                    type="date" 
+                                                    value={editForm.birthDate} 
+                                                    onChange={e => setEditForm({...editForm, birthDate: e.target.value})} 
+                                                    className="w-full px-4 py-3 rounded-xl border border-stone-200 focus:border-brand-blue focus:ring-4 focus:ring-blue-500/10 outline-none transition-all bg-stone-50 focus:bg-white" 
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="pt-8 flex justify-end border-t border-stone-100">
+                                            <button type="submit" disabled={isSavingProfile} className="px-8 py-3 bg-brand-blue text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 hover:bg-blue-800 transition-colors flex items-center gap-2">
+                                                {isSavingProfile ? <Loader className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                                                Save Changes
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
                              </div>
                         )}
-                        {activeTab === 'addresses' && (
+
+                        {activeTab === 'shop' && isSellerOrAdmin && (
+                            <div className="space-y-8 animate-scale-in">
+                                {/* Shop Settings Section for Sellers/Admins */}
+                                <div className="bg-white p-8 rounded-3xl border border-stone-100 shadow-sm">
+                                    <h2 className="text-2xl font-serif font-bold text-stone-900 mb-6">Shop Profile</h2>
+                                    <div className="space-y-6 max-w-2xl">
+                                        <div className="flex items-center gap-6">
+                                            <div className="w-24 h-24 rounded-full bg-stone-100 overflow-hidden relative border border-stone-200">
+                                                {shopImageFile ? (
+                                                    <img src={URL.createObjectURL(shopImageFile)} className="w-full h-full object-cover" />
+                                                ) : user.shopImage ? (
+                                                    <img src={user.shopImage} className="w-full h-full object-cover" />
+                                                ) : (
+                                                    <Store className="w-10 h-10 text-stone-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                                                )}
+                                            </div>
+                                            <div>
+                                                <label className="px-4 py-2 border border-stone-300 rounded-lg text-sm font-bold cursor-pointer hover:bg-stone-50 bg-white">
+                                                    Upload Logo
+                                                    <input type="file" className="hidden" accept="image/*" onChange={e => e.target.files && setShopImageFile(e.target.files[0])} />
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1">Shop Name</label>
+                                            <input value={shopName} onChange={e => setShopName(e.target.value)} className="w-full px-4 py-2 rounded-lg border bg-stone-50 focus:bg-white border-stone-200 focus:border-brand-blue transition-all" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1">Shop Address</label>
+                                            <div className="space-y-4">
+                                                <div className="relative">
+                                                    <select className="w-full px-4 py-2 rounded-lg border bg-stone-50 focus:bg-white border-stone-200 appearance-none" value={shopProvinceCode} onChange={async e => {
+                                                        const code = e.target.value;
+                                                        setShopProvinceCode(code);
+                                                        setShopProvince(e.target.options[e.target.selectedIndex].text);
+                                                        setShopCityCode('');
+                                                        setShopCity('');
+                                                        setShopBarangay('');
+                                                        setShopCities(await fetchCities(code));
+                                                        setShopBarangays([]);
+                                                    }}>
+                                                        <option value="">Select Province</option>
+                                                        {provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}
+                                                    </select>
+                                                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+                                                </div>
+                                                
+                                                <div className="relative">
+                                                    <select className="w-full px-4 py-2 rounded-lg border bg-stone-50 focus:bg-white border-stone-200 appearance-none" value={shopCityCode} onChange={async e => {
+                                                        const code = e.target.value;
+                                                        setShopCityCode(code);
+                                                        setShopCity(e.target.options[e.target.selectedIndex].text);
+                                                        setShopBarangay('');
+                                                        setShopBarangays(await fetchBarangays(code));
+                                                    }} disabled={!shopProvinceCode}>
+                                                        <option value="">Select City</option>
+                                                        {shopCities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                                                    </select>
+                                                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+                                                </div>
+
+                                                <div className="relative">
+                                                    <select className="w-full px-4 py-2 rounded-lg border bg-stone-50 focus:bg-white border-stone-200 appearance-none" value={shopBarangay} onChange={e => setShopBarangay(e.target.value)} disabled={!shopCityCode}>
+                                                        <option value="">Select Barangay</option>
+                                                        {shopBarangays.map(b => <option key={b.code} value={b.name}>{b.name}</option>)}
+                                                    </select>
+                                                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="pt-4 flex justify-end">
+                                            <button onClick={handleSaveShopSettings} disabled={isSavingShop} className="px-8 py-3 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors flex items-center gap-2">
+                                                {isSavingShop ? <Loader className="w-5 h-5 animate-spin" /> : <Store className="w-5 h-5" />}
+                                                Update Shop Profile
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                             </div>
+                        )}
+                        {activeTab === 'addresses' && !isSellerOrAdmin && (
                             <div className="bg-white p-8 rounded-3xl border border-stone-100 animate-scale-in shadow-sm">
                                 <div className="flex justify-between items-center mb-8">
                                     <h2 className="text-2xl font-serif font-bold text-stone-900">Saved Addresses</h2>
+                                    <button 
+                                        onClick={() => handleOpenAddressModal()} 
+                                        className="px-4 py-2 bg-brand-blue text-white rounded-lg font-bold hover:bg-blue-800 transition-colors flex items-center gap-2 text-sm"
+                                    >
+                                        <Plus className="w-4 h-4" /> Add New Address
+                                    </button>
                                 </div>
                                 <div className="grid gap-4">
                                      {user.addresses && user.addresses.length > 0 ? (
                                          user.addresses.map((addr: Address, idx: number) => (
-                                             <div key={idx} className="border border-stone-200 rounded-2xl p-6 flex justify-between items-start hover:border-brand-blue transition-colors group bg-stone-50/50">
+                                             <div key={idx} className={`border rounded-2xl p-6 flex justify-between items-start transition-colors group ${addr.isDefault ? 'border-brand-blue bg-blue-50/50' : 'border-stone-200 bg-stone-50/50 hover:border-brand-blue'}`}>
                                                  <div className="flex gap-4">
-                                                     <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-brand-blue flex-shrink-0">
+                                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${addr.isDefault ? 'bg-brand-blue text-white' : 'bg-blue-50 text-brand-blue'}`}>
                                                          <MapPin className="w-5 h-5" />
                                                      </div>
                                                      <div>
                                                          <div className="flex items-center gap-3 mb-1">
                                                              <span className="font-bold text-lg text-stone-900">{addr.fullName}</span>
-                                                             {addr.isDefault && <span className="bg-brand-blue text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Default</span>}
+                                                             {addr.isDefault ? (
+                                                                <span className="bg-brand-blue text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Default</span>
+                                                             ) : (
+                                                                <button 
+                                                                    onClick={() => handleSetDefaultAddress(idx)}
+                                                                    className="text-stone-400 hover:text-brand-blue text-xs font-bold underline decoration-dotted underline-offset-2 transition-colors"
+                                                                >
+                                                                    Set as Default
+                                                                </button>
+                                                             )}
                                                          </div>
                                                          <p className="text-stone-500 text-sm mb-1">{addr.mobileNumber}</p>
                                                          <p className="text-stone-700 leading-relaxed">
@@ -1770,9 +1975,14 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
                                                          </p>
                                                      </div>
                                                  </div>
-                                                 <button onClick={() => handleDeleteAddress(idx)} className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors opacity-0 group-hover:opacity-100">
-                                                     <Trash2 className="w-5 h-5" />
-                                                 </button>
+                                                 <div className="flex items-center gap-2">
+                                                    <button onClick={() => handleOpenAddressModal(idx)} className="p-2 text-stone-400 hover:text-brand-blue hover:bg-blue-50 rounded-xl transition-colors" title="Edit Address">
+                                                        <Edit3 className="w-5 h-5" />
+                                                    </button>
+                                                    <button onClick={() => confirmDeleteAddress(idx)} className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors" title="Delete Address">
+                                                        <Trash2 className="w-5 h-5" />
+                                                    </button>
+                                                 </div>
                                              </div>
                                          ))
                                      ) : (
@@ -1797,12 +2007,149 @@ const ProfilePage: React.FC<any> = ({ user, onUpdateProfile, onNavigate }) => {
                     status={selectedTrackingOrder.status}
                 />
             )}
+            
+            <CancelOrderModal
+                isOpen={isCancelOrderModalOpen}
+                onClose={() => setIsCancelOrderModalOpen(false)}
+                onSubmit={handleSubmitCancellation}
+                isLoading={isCancelling}
+            />
+
+            {/* Delete Confirmation Modal */}
+            {isDeleteModalOpen && (
+                <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl w-full max-w-sm p-6 animate-scale-in text-center">
+                        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
+                            <Trash2 className="w-8 h-8" />
+                        </div>
+                        <h3 className="text-xl font-bold mb-2 text-stone-900">Delete Address?</h3>
+                        <p className="text-stone-500 mb-6 text-sm">Are you sure you want to delete this address? This action cannot be undone.</p>
+                        <div className="flex gap-3">
+                            <button 
+                                onClick={() => setIsDeleteModalOpen(false)} 
+                                className="flex-1 py-3 border border-stone-200 rounded-xl font-bold text-stone-600 hover:bg-stone-50"
+                            >
+                                Cancel
+                            </button>
+                            <button 
+                                onClick={executeDeleteAddress} 
+                                className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {isAddressModalOpen && (
+               <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                   <div className="bg-white rounded-2xl w-full max-w-lg p-6 animate-scale-in max-h-[90vh] overflow-y-auto">
+                       <div className="flex justify-between items-center mb-6 border-b border-stone-100 pb-4">
+                           <h2 className="text-xl font-bold text-stone-900">{editingAddressIndex !== null ? 'Edit Address' : 'Add New Address'}</h2>
+                           <button onClick={() => setIsAddressModalOpen(false)}><X className="w-5 h-5 text-stone-500" /></button>
+                       </div>
+                       <form onSubmit={handleAddressSubmit} className="space-y-4">
+                            {loadingLocation && (
+                                <div className="p-2 bg-blue-50 text-brand-blue text-xs rounded-lg flex items-center gap-2 mb-2">
+                                    <Loader className="w-3 h-3 animate-spin" /> Loading location data...
+                                </div>
+                            )}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-sm font-bold text-stone-700">Full Name</label>
+                                    <input required className="w-full px-4 py-2 rounded-lg border border-stone-200" value={addressForm.fullName} onChange={e => setAddressForm({...addressForm, fullName: e.target.value})} />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-sm font-bold text-stone-700">Mobile Number</label>
+                                    <input required className="w-full px-4 py-2 rounded-lg border border-stone-200" value={addressForm.mobileNumber} onChange={e => setAddressForm({...addressForm, mobileNumber: e.target.value})} />
+                                </div>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-sm font-bold text-stone-700">Province</label>
+                                <div className="relative">
+                                    <select required className="w-full px-4 py-2 rounded-lg border border-stone-200 appearance-none bg-white" value={provCode} onChange={async (e) => {
+                                        const code = e.target.value;
+                                        setProvCode(code);
+                                        const name = e.target.options[e.target.selectedIndex].text;
+                                        setAddressForm({...addressForm, province: name, city: '', barangay: ''});
+                                        setCities([]); setBarangays([]); setCityCode('');
+                                        setLoadingLocation(true);
+                                        if(code) setCities(await fetchCities(code));
+                                        setLoadingLocation(false);
+                                    }}>
+                                        <option value="">Select Province</option>
+                                        {provinces.map(p => <option key={p.code} value={p.code}>{p.name}</option>)}
+                                    </select>
+                                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-sm font-bold text-stone-700">City/Municipality</label>
+                                    <div className="relative">
+                                        <select required className="w-full px-4 py-2 rounded-lg border border-stone-200 appearance-none bg-white" value={cityCode} onChange={async (e) => {
+                                            const code = e.target.value;
+                                            setCityCode(code);
+                                            const name = e.target.options[e.target.selectedIndex].text;
+                                            setAddressForm({...addressForm, city: name, barangay: ''});
+                                            setBarangays([]);
+                                            setLoadingLocation(true);
+                                            if(code) setBarangays(await fetchBarangays(code));
+                                            setLoadingLocation(false);
+                                        }} disabled={!provCode}>
+                                            <option value="">Select City</option>
+                                            {cities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                                        </select>
+                                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-sm font-bold text-stone-700">Barangay</label>
+                                    <div className="relative">
+                                        <select required className="w-full px-4 py-2 rounded-lg border border-stone-200 appearance-none bg-white" value={addressForm.barangay} onChange={e => setAddressForm({...addressForm, barangay: e.target.value})} disabled={!cityCode}>
+                                            <option value="">Select Barangay</option>
+                                            {barangays.map(b => <option key={b.code} value={b.name}>{b.name}</option>)}
+                                        </select>
+                                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-sm font-bold text-stone-700">Street Address</label>
+                                <input required className="w-full px-4 py-2 rounded-lg border border-stone-200" value={addressForm.street} onChange={e => setAddressForm({...addressForm, street: e.target.value})} placeholder="House No., Street Name, Landmark" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-sm font-bold text-stone-700">Zip Code</label>
+                                <input required className="w-full px-4 py-2 rounded-lg border border-stone-200" value={addressForm.zipCode} onChange={e => setAddressForm({...addressForm, zipCode: e.target.value})} placeholder="e.g. 2900" />
+                            </div>
+                            
+                            <div className="flex items-center gap-2 pt-2">
+                                <input 
+                                    type="checkbox" 
+                                    id="defaultAddr" 
+                                    checked={addressForm.isDefault} 
+                                    onChange={e => setAddressForm({...addressForm, isDefault: e.target.checked})}
+                                    className="w-4 h-4 rounded border-stone-300 text-brand-blue focus:ring-brand-blue"
+                                />
+                                <label htmlFor="defaultAddr" className="text-sm font-medium text-stone-700 cursor-pointer">
+                                    Set as default address
+                                </label>
+                            </div>
+
+                            <button type="submit" className="w-full py-3 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors mt-4">
+                                Save Address
+                            </button>
+                       </form>
+                   </div>
+               </div>
+           )}
         </div>
     );
 };
 
 const ProductDetailsPage: React.FC<any> = ({ product, onAddToCart, onNavigate }) => {
-     const [selectedVariation, setSelectedVariation] = useState<Variation | undefined>(undefined);
+    const [selectedVariation, setSelectedVariation] = useState<Variation | undefined>(undefined);
     const prices = product.variations?.map((v: any) => v.price) || [product.price];
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
@@ -2056,7 +2403,8 @@ const MarketplacePage: React.FC<any> = ({ products, onNavigate, onAddToCart }) =
         const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                            p.description.toLowerCase().includes(searchTerm.toLowerCase());
         const matchCategory = selectedCategory === 'All' || p.category === selectedCategory;
-        return matchSearch && matchCategory;
+        const isActive = p.sellerStatus !== 'suspended' && p.sellerStatus !== 'banned';
+        return matchSearch && matchCategory && isActive;
     });
 
     return (
@@ -2117,7 +2465,7 @@ const HomePage: React.FC<any> = ({ products, onNavigate, onAddToCart, user }) =>
                              <div className="bg-stone-100 text-stone-600 px-3 py-1 rounded-lg text-sm font-bold">{sellerProducts.length} Products</div>
                          </div>
                     </div>
-                    <button onClick={() => onNavigate('/seller-dashboard')} className="px-6 py-2 bg-brand-blue text-white rounded-xl font-bold">Edit Shop Profile</button>
+                    <button onClick={() => onNavigate('/profile')} className="px-6 py-2 bg-brand-blue text-white rounded-xl font-bold hover:bg-blue-800 transition-colors">Edit Shop Profile</button>
                 </div>
                 
                 <div className="flex justify-between items-center mb-6">
@@ -2147,6 +2495,9 @@ const HomePage: React.FC<any> = ({ products, onNavigate, onAddToCart, user }) =>
         );
     }
     
+    // Filter out suspended products for Customer View
+    const availableProducts = products.filter((p: any) => p.sellerStatus !== 'suspended' && p.sellerStatus !== 'banned');
+
     // Customer View
     return (
         <div>
@@ -2196,7 +2547,7 @@ const HomePage: React.FC<any> = ({ products, onNavigate, onAddToCart, user }) =>
                      </button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
-                    {products.slice(0, 4).map((p: any) => (
+                    {availableProducts.slice(0, 4).map((p: any) => (
                         <ProductCard key={p.id} product={p} onClick={() => onNavigate(`/product/${p.id}`)} />
                     ))}
                 </div>
@@ -2221,26 +2572,65 @@ export const App: React.FC = () => {
           if (u) {
               const profile = await getUserProfile(u.uid);
               if (profile) {
+                  // Check status
+                  if (profile.status === 'banned') {
+                      alert("Your account has been banned.");
+                      auth.signOut();
+                      setUser(null);
+                      return;
+                  }
+                  if (profile.status === 'suspended') {
+                      // Check if expired
+                      const isExpired = await checkSuspensionExpiry(u.uid);
+                      if (!isExpired) {
+                          // Still suspended
+                           // We allow login but restrict access? 
+                           // Current flow alerts and logs out. 
+                           // If you want them to see dashboard to know date, we shouldn't log out.
+                           // But for now, let's keep it restricted.
+                           const endDate = profile.suspensionEndDate ? new Date(profile.suspensionEndDate.seconds * 1000).toLocaleDateString() : 'indefinite';
+                           alert(`Your account has been suspended until ${endDate}.`);
+                           auth.signOut();
+                           setUser(null);
+                           return;
+                      }
+                      // If expired, profile status will be updated in DB by checkSuspensionExpiry
+                      // Fetch fresh profile
+                      const freshProfile = await getUserProfile(u.uid);
+                      if (freshProfile) {
+                          // Continue login with fresh data
+                          // ... assign freshProfile to vars below
+                      }
+                  }
+
+                  // Re-fetch in case it was updated by expiry check
+                  const updatedProfile = await getUserProfile(u.uid) || profile;
+
                   setUser({
                       uid: u.uid,
-                      name: profile.displayName || u.displayName || 'User',
+                      name: updatedProfile.displayName || u.displayName || 'User',
                       email: u.email || '',
                       emailVerified: u.emailVerified,
-                      role: profile.role,
-                      username: profile.username,
-                      phoneNumber: profile.phoneNumber,
-                      gender: profile.gender,
-                      birthDate: profile.birthDate,
-                      bag: profile.bag || [],
-                      photoURL: profile.photoURL,
-                      createdAt: profile.createdAt,
-                      addresses: profile.addresses || [],
-                      bankAccounts: profile.bankAccounts || [],
-                      shopName: profile.shopName,
-                      shopAddress: profile.shopAddress,
-                      shopImage: profile.shopImage,
+                      role: updatedProfile.role,
+                      username: updatedProfile.username,
+                      phoneNumber: updatedProfile.phoneNumber,
+                      gender: updatedProfile.gender,
+                      birthDate: updatedProfile.birthDate,
+                      bag: updatedProfile.bag || [],
+                      photoURL: updatedProfile.photoURL,
+                      createdAt: updatedProfile.createdAt,
+                      addresses: updatedProfile.addresses || [],
+                      bankAccounts: updatedProfile.bankAccounts || [],
+                      shopName: updatedProfile.shopName,
+                      shopAddress: updatedProfile.shopAddress,
+                      shopProvince: updatedProfile.shopProvince,
+                      shopCity: updatedProfile.shopCity,
+                      shopBarangay: updatedProfile.shopBarangay,
+                      shopImage: updatedProfile.shopImage,
+                      status: updatedProfile.status,
+                      suspensionEndDate: updatedProfile.suspensionEndDate
                   } as UserState);
-                  if (profile.bag) setCart(profile.bag);
+                  if (updatedProfile.bag) setCart(updatedProfile.bag);
               } else {
                    setUser({
                       uid: u.uid,
@@ -2262,6 +2652,18 @@ export const App: React.FC = () => {
   const handleRefreshProducts = async () => {
       const fetched = await fetchProducts();
       if(fetched && fetched.length > 0) setProducts(fetched);
+  };
+
+  const handleRefreshUser = async () => {
+      if (auth.currentUser) {
+          const profile = await getUserProfile(auth.currentUser.uid);
+          if (profile) {
+              setUser(prev => {
+                  if (!prev) return null;
+                  return { ...prev, ...profile };
+              });
+          }
+      }
   };
 
   useEffect(() => {
@@ -2333,11 +2735,11 @@ export const App: React.FC = () => {
   } else if (currentPath === '/cart') {
       content = <CartPage cart={cart} onUpdateQuantity={handleUpdateCartQty} onRemove={handleRemoveFromCart} onCheckoutClick={() => setIsCheckoutModalOpen(true)} onContinueShopping={() => handleNavigate('/shop')} />;
   } else if (currentPath === '/seller-dashboard') {
-      content = <Dashboard user={user} products={products} onUpdateProfile={() => { /* re-fetch handled by auth listener */ }} onRefreshGlobalData={handleRefreshProducts} />;
+      content = <Dashboard user={user} products={products} onUpdateProfile={handleRefreshUser} onRefreshGlobalData={handleRefreshProducts} />;
   } else if (currentPath === '/seller-registration') {
       content = <SellerRegistrationPage user={user} onLoginClick={() => setIsAuthModalOpen(true)} />;
   } else if (currentPath === '/profile') {
-      content = <ProfilePage user={user} onUpdateProfile={() => { /* re-fetch handled by auth listener */ }} onNavigate={handleNavigate} />;
+      content = <ProfilePage user={user} onUpdateProfile={handleRefreshUser} onNavigate={handleNavigate} />;
   } else if (currentPath.startsWith('/product/')) {
       const id = currentPath.split('/')[2];
       const product = products.find(p => p.id === id);

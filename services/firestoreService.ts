@@ -1,4 +1,5 @@
 
+
 import firebase from 'firebase/compat/app';
 import { db, storage, isFirebaseConfigured } from '../firebaseConfig';
 import { Product, UserRole, UserProfile, Order, CartItem, OrderStatus, Review, PaymentMethod, DeliveryMethod, Address, Conversation, ChatMessage, TrackingEvent, Variation, SellerApplication } from '../types';
@@ -189,6 +190,63 @@ export const updateUserProfile = async (uid: string, data: Partial<UserProfile>)
     }
 }
 
+export const updateUserStatus = async (uid: string, status: 'active' | 'suspended' | 'banned', suspensionDays?: number): Promise<boolean> => {
+    if (!isFirebaseConfigured()) return false;
+    try {
+        const batch = db.batch();
+        const userRef = db.collection(USERS_COLLECTION).doc(uid);
+        
+        const updates: any = {
+            status,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        if (status === 'suspended' && suspensionDays) {
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + suspensionDays);
+            updates.suspensionEndDate = firebase.firestore.Timestamp.fromDate(endDate);
+        } else if (status === 'active') {
+             updates.suspensionEndDate = firebase.firestore.FieldValue.delete();
+        }
+
+        batch.update(userRef, updates);
+
+        // Update all products belonging to this user
+        const productsSnapshot = await db.collection(PRODUCTS_COLLECTION).where('sellerId', '==', uid).get();
+        productsSnapshot.forEach(doc => {
+            batch.update(doc.ref, { sellerStatus: status });
+        });
+
+        await batch.commit();
+        return true;
+    } catch (error) {
+        console.error("Error updating user status:", error);
+        return false;
+    }
+}
+
+export const checkSuspensionExpiry = async (uid: string): Promise<boolean> => {
+  if (!isFirebaseConfigured()) return false;
+  try {
+    const doc = await db.collection(USERS_COLLECTION).doc(uid).get();
+    if (!doc.exists) return false;
+    const data = doc.data() as UserProfile;
+    
+    if (data.status === 'suspended' && data.suspensionEndDate) {
+      const endDate = data.suspensionEndDate.toDate();
+      if (new Date() > endDate) {
+        // Expired, reactivate
+        console.log("Suspension expired, reactivating user:", uid);
+        return await updateUserStatus(uid, 'active');
+      }
+    }
+    return false;
+  } catch(e) { 
+      console.error("Error checking suspension:", e); 
+      return false; 
+  }
+}
+
 // Helper: Resize Image
 const resizeImage = (file: File, maxWidth: number): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -346,6 +404,23 @@ export const fetchSellerApplications = async (status: 'pending' | 'approved' | '
     }
 }
 
+export const fetchApprovedSellers = async (): Promise<UserProfile[]> => {
+    if (!isFirebaseConfigured()) return [];
+    try {
+        const snapshot = await db.collection(USERS_COLLECTION)
+            .where('role', '==', 'seller')
+            .get();
+        const sellers: UserProfile[] = [];
+        snapshot.forEach(doc => {
+            sellers.push({ uid: doc.id, ...doc.data() } as UserProfile);
+        });
+        return sellers;
+    } catch (error) {
+        console.error("Error fetching approved sellers:", error);
+        return [];
+    }
+}
+
 export const approveSellerApplication = async (application: SellerApplication): Promise<boolean> => {
     if (!isFirebaseConfigured() || !application.id || !application.userId) return false;
     try {
@@ -365,6 +440,7 @@ export const approveSellerApplication = async (application: SellerApplication): 
             role: 'seller',
             shopName: application.businessName,
             shopAddress: `${application.city}, ${application.province}`,
+            status: 'active', // Ensure status is active upon approval
             // We store the "Seller Email" as a property, but we don't change the Auth email 
             // to avoid locking the user out of their account without re-verification.
             sellerEmail: sellerEmail 
@@ -522,6 +598,89 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus): P
         return true;
     } catch (error) {
         console.error("Error updating order status:", error);
+        return false;
+    }
+};
+
+export const requestOrderCancellation = async (orderId: string, reason: string): Promise<boolean> => {
+    if (!isFirebaseConfigured()) return false;
+    try {
+        await db.collection(ORDERS_COLLECTION).doc(orderId).update({
+            status: 'Cancellation Requested',
+            cancellationReason: reason
+        });
+        return true;
+    } catch (error) {
+        console.error("Error requesting cancellation:", error);
+        return false;
+    }
+};
+
+export const approveOrderCancellation = async (orderId: string): Promise<boolean> => {
+    if (!isFirebaseConfigured()) return false;
+    try {
+        await db.runTransaction(async (transaction) => {
+            const orderRef = db.collection(ORDERS_COLLECTION).doc(orderId);
+            const orderDoc = await transaction.get(orderRef);
+
+            if (!orderDoc.exists) throw new Error("Order does not exist");
+
+            const order = orderDoc.data() as Order;
+
+            if (order.status === 'Cancelled') return; // Already cancelled
+
+            // 1. Identify unique products
+            const productIds = Array.from(new Set(order.items.map(item => item.id)));
+            
+            // 2. Read all needed product docs
+            const productDocs = await Promise.all(
+                productIds.map(pid => transaction.get(db.collection(PRODUCTS_COLLECTION).doc(pid)))
+            );
+
+            // 3. Update Order Status
+            transaction.update(orderRef, { status: 'Cancelled' });
+
+            // 4. Calculate and execute Stock Updates
+            productDocs.forEach(pDoc => {
+                if (!pDoc.exists) return; // Skip deleted products
+
+                const productData = pDoc.data() as Product;
+                const productId = pDoc.id;
+                
+                const itemsToRestore = order.items.filter(item => item.id === productId);
+                
+                let newVariations = productData.variations ? [...productData.variations] : [];
+                let stockRestored = 0;
+                let variationsUpdated = false;
+
+                itemsToRestore.forEach(item => {
+                    stockRestored += item.quantity;
+                    if (item.selectedVariation && newVariations.length > 0) {
+                        const varIndex = newVariations.findIndex(v => v.id === item.selectedVariation!.id);
+                        if (varIndex !== -1) {
+                            newVariations[varIndex] = {
+                                ...newVariations[varIndex],
+                                stock: (newVariations[varIndex].stock || 0) + item.quantity
+                            };
+                            variationsUpdated = true;
+                        }
+                    }
+                });
+
+                const updates: any = {};
+                if (variationsUpdated) {
+                    updates.variations = newVariations;
+                    updates.stock = newVariations.reduce((sum, v) => sum + (v.stock || 0), 0);
+                } else {
+                    updates.stock = (productData.stock || 0) + stockRestored;
+                }
+
+                transaction.update(db.collection(PRODUCTS_COLLECTION).doc(productId), updates);
+            });
+        });
+        return true;
+    } catch (error) {
+        console.error("Error approving cancellation:", error);
         return false;
     }
 };
@@ -762,7 +921,8 @@ export const createUserDocument = async (user: any, additionalData: any = {}) =>
           photoURL,
           createdAt: timestamp,
           lastLoginAt: timestamp,
-          role: role, 
+          role: role,
+          status: 'active', // Default status
           bag: [], 
           ...additionalData,
         });
